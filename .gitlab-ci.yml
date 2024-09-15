@@ -1,0 +1,39 @@
+image: python:3-slim
+
+include:
+  - template: Security/Secret-Detection.gitlab-ci.yml
+  - template: Security/SAST.gitlab-ci.yml
+
+secret_detection:
+  variables:
+    SECRET_DETECTION_HISTORIC_SCAN: "true"
+
+variables:
+  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+
+cache:
+  paths:
+    - .cache/pip
+
+stages:
+  - test
+  - build
+
+tests:
+  stage: test
+  script:
+    - pip install -r requirements.txt
+
+build:
+  stage: build
+  image: docker:24
+  before_script: []
+  script:
+    - docker login -u gitlab-ci-token -p $CI_JOB_TOKEN $CI_REGISTRY
+    - docker build --build-arg CI_JOB_TOKEN=$CI_JOB_TOKEN --tag $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_NAME --tag $CI_REGISTRY_IMAGE:latest .
+    - docker push $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_NAME
+    - docker push $CI_REGISTRY_IMAGE:latest
+    - docker image rm $CI_REGISTRY_IMAGE:$CI_COMMIT_REF_NAME
+    - docker image rm $CI_REGISTRY_IMAGE:latest
+  only:
+    - tags
