@@ -19,17 +19,17 @@ def command_description(description: str):
 
 """TelegramBot class defines the basing class for the Bot."""
 class TelegramBot:
-    logger: Logger
-    user_id: int
-    _types = [
+    _logger: Logger
+    __user_id: int
+    __types = [
         "_command_handler",
         "_message_handler"
     ]
     application: Application
 
     def __init__(self, logger: Logger, token: str, user_id: int):
-        self.logger = logger
-        self.user_id = user_id
+        self._logger = logger
+        self.__user_id = int(user_id)
 
         # Store persistent data
         makedirs('.data', exist_ok=True)  # Create data
@@ -48,14 +48,14 @@ class TelegramBot:
             commands += [BotCommand(handler.replace('_command_handler', ''), attr.description)]
 
         try:
-            await application.bot.set_my_commands(commands, scope=BotCommandScopeChat(self.user_id))
+            await application.bot.set_my_commands(commands, scope=BotCommandScopeChat(self.__user_id))
         except telegram.error.BadRequest as exc:
-            self.logger.warning(f"Can't set my commands for the bot: {exc.message}")
+            self._logger.warning(f"Can't set my commands for the bot: {exc.message}")
 
     def _log(self, update: Update, level: str, message: str) -> None:
         """Log message with chat_id and message_id."""
         _level = getattr(logging, level.upper())
-        self.logger.log(_level, f'[{update.effective_chat.id}:{update.effective_message.message_id}] {message}')
+        self._logger.log(_level, f'[{update.effective_chat.id}:{update.effective_message.message_id}] {message}')
 
     async def _deny_access(self, update: Update, context: CallbackContext) -> None:
         """Deny unauthorized access"""
@@ -65,15 +65,15 @@ class TelegramBot:
         await update.effective_message.reply_text(
             f'Access denied. Your ID ({update.effective_user.id}) is not whitelisted')
 
-    def __add_dispatchers(self,):
-        self.application.add_handler(MessageHandler(~filters.Chat(self.user_id), self._deny_access))
-        for _type in self._types:
+    def __add_dispatchers(self):
+        self.application.add_handler(MessageHandler(~filters.Chat(self.__user_id), self._deny_access))
+        for _type in self.__types:
             handler_functions = list(filter(lambda x: x.endswith(_type), dir(self)))
             for handler in handler_functions:
                 if _type == '_message_handler':
                     self.application.add_handler(
                         MessageHandler(
-                            filters.TEXT & ~filters.COMMAND & filters.Chat(self.user_id),
+                            filters.TEXT & ~filters.COMMAND & filters.Chat(self.__user_id),
                             getattr(self, handler)
                         )
                     )
@@ -83,7 +83,7 @@ class TelegramBot:
                         CommandHandler(
                             handler.replace(_type, ''),
                             getattr(self, handler),
-                            filters.Chat(self.user_id)
+                            filters.Chat(self.__user_id)
                         )
                     )
 
@@ -93,10 +93,10 @@ class TelegramBot:
             return
 
         if isinstance(context.error, telegram.error.Conflict):
-            self.logger.error('Telegram requests conflict')
+            self._logger.error('Telegram requests conflict')
             return
         # Log the error before we do anything else, so we can see it even if something breaks.
-        self.logger.error(msg='Exception while handling an update: ', exc_info=context.error)
+        self._logger.error(msg='Exception while handling an update: ', exc_info=context.error)
 
         # If there is no update, don't send an error report (probably a network error, happens sometimes)
         if update is None:
@@ -117,9 +117,9 @@ class TelegramBot:
         )
 
         # Finally, send the message
-        self.logger.info('Sending error report')
+        self._logger.info('Sending error report')
         await context.bot.send_document(
-            chat_id=self.user_id, document=message, filename='error_report.txt',
+            chat_id=self.__user_id, document=message, filename='error_report.txt',
             caption='#error_report\nAn exception was raised in runtime\n'
         )
 

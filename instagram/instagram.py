@@ -1,39 +1,40 @@
 from logging import Logger
-from typing import Optional
-import re
-import html
 import requests
-from urllib.parse import urlsplit
+from urllib.parse import urlparse
+
+from media.media import SocialMedia, Medias
 
 
-class Instagram:
-    logger: Logger
-    api_key: str
+class Instagram(SocialMedia):
+    """Instagram is the class to manage Instagram medias."""
 
-    @staticmethod
-    def is_reel(url: str) -> bool:
-        return re.search(r"instagram\.com\/reel\/[a-zA-Z0-9]+", url) is not None
+    __logger: Logger
+    __api_key: str
 
     def __init__(self, logger: Logger, api_key: str):
-        self.logger = logger
-        self.api_key = api_key
+        self.__logger = logger
+        self.__api_key = api_key
 
-    def get_media(self, url: str) -> Optional[str]:
-        """Extract Instagram media URL from message."""
+    def is_valid_url(self, url: str) -> bool:
+        """Check if URL points to valid social media data."""
+
+        parsed_url = urlparse(url)
+        return parsed_url.scheme in ['http', 'https'] and parsed_url.netloc.endswith('instagram.com')
+
+    def get_media(self, url: str) -> Medias:
+        """Get all available medias."""
+
         api_url = "https://instagram-looter2.p.rapidapi.com/post"
         querystring = {"url": url}
         headers = {
-            "x-rapidapi-key": self.api_key,
+            "x-rapidapi-key": self.__api_key,
             "x-rapidapi-host": "instagram-looter2.p.rapidapi.com"
         }
 
-        try:
-            r = requests.get(api_url, headers=headers, params=querystring)
-            r.raise_for_status()
+        r = requests.get(api_url, headers=headers, params=querystring)
+        r.raise_for_status()
 
-            j = r.json()
-            if j['__typename'] == 'GraphVideo':
-                return j['video_url']
-        except:
-            self.logger.info(f'Can not get reel link [{url}]')
-        return None
+        j = r.json()
+        if j['__typename'] == 'GraphVideo':
+            return Medias([], [], [j['video_url']], [])
+        return Medias([], [], [], [])

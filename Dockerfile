@@ -14,4 +14,4 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-CMD [ "python", "main.py" ]
+CMD [ "python", "social_media_downloader.py" ]
