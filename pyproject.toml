@@ -1,0 +1,13 @@
+[project]
+name = "social-media-downloader"
+version = "1.0.0"
+description = "Social Media Downloader Telegram Bot"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = [
+    "python-telegram-bot==22.7",
+    "pytubefix==10.3.8",
+    "requests==2.33.1",
+    "urllib3==2.6.3",
+    "python-dotenv==1.2.2",
+]

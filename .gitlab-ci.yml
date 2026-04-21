@@ -1,4 +1,4 @@
-image: python:3-slim
+image: ghcr.io/astral-sh/uv:python3.14-alpine3.23
 
 include:
   - template: Security/Secret-Detection.gitlab-ci.yml
@@ -9,20 +9,14 @@ secret_detection:
     SECRET_DETECTION_HISTORIC_SCAN: "true"
 
 variables:
-  PIP_CACHE_DIR: "$CI_PROJECT_DIR/.cache/pip"
+  UV_CACHE_DIR: "$CI_PROJECT_DIR/.cache/uv"
 
 cache:
   paths:
-    - .cache/pip
+    - .cache/uv
 
 stages:
-  - test
   - build
-
-tests:
-  stage: test
-  script:
-    - pip install -r requirements.txt
 
 build:
   stage: build

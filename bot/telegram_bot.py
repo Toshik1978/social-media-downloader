@@ -17,19 +17,19 @@ def command_description(description: str):
     return _
 
 
-"""TelegramBot class defines the basing class for the Bot."""
+"""TelegramBot class defines the basic class for the Bot."""
 class TelegramBot:
     _logger: Logger
-    __user_id: int
+    __user_ids: list[int]
     __types = [
         "_command_handler",
         "_message_handler"
     ]
     application: Application
 
-    def __init__(self, logger: Logger, token: str, user_id: int):
+    def __init__(self, logger: Logger, token: str, user_ids: list[int]):
         self._logger = logger
-        self.__user_id = int(user_id)
+        self.__user_ids = user_ids
 
         # Store persistent data
         makedirs('.data', exist_ok=True)  # Create data
@@ -48,7 +48,7 @@ class TelegramBot:
             commands += [BotCommand(handler.replace('_command_handler', ''), attr.description)]
 
         try:
-            await application.bot.set_my_commands(commands, scope=BotCommandScopeChat(self.__user_id))
+            await application.bot.set_my_commands(commands)
         except telegram.error.BadRequest as exc:
             self._logger.warning(f"Can't set my commands for the bot: {exc.message}")
 
@@ -66,14 +66,14 @@ class TelegramBot:
             f'Access denied. Your ID ({update.effective_user.id}) is not whitelisted')
 
     def __add_dispatchers(self):
-        self.application.add_handler(MessageHandler(~filters.Chat(self.__user_id), self._deny_access))
+        self.application.add_handler(MessageHandler(~filters.Chat(self.__user_ids), self._deny_access))
         for _type in self.__types:
             handler_functions = list(filter(lambda x: x.endswith(_type), dir(self)))
             for handler in handler_functions:
                 if _type == '_message_handler':
                     self.application.add_handler(
                         MessageHandler(
-                            filters.TEXT & ~filters.COMMAND & filters.Chat(self.__user_id),
+                            filters.TEXT & ~filters.COMMAND & filters.Chat(self.__user_ids),
                             getattr(self, handler)
                         )
                     )
@@ -83,7 +83,7 @@ class TelegramBot:
                         CommandHandler(
                             handler.replace(_type, ''),
                             getattr(self, handler),
-                            filters.Chat(self.__user_id)
+                            filters.Chat(self.__user_ids)
                         )
                     )
 
@@ -119,7 +119,7 @@ class TelegramBot:
         # Finally, send the message
         self._logger.info('Sending error report')
         await context.bot.send_document(
-            chat_id=self.__user_id, document=message, filename='error_report.txt',
+            chat_id=self.__user_ids[0], document=message, filename='error_report.txt',
             caption='#error_report\nAn exception was raised in runtime\n'
         )
 
