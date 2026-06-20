@@ -1,4 +1,4 @@
-FROM ghcr.io/astral-sh/uv:python3-alpine3
+FROM ghcr.io/astral-sh/uv:python3.14-alpine
 
 # Install the project into `/app`
 WORKDIR /app
