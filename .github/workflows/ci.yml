@@ -1,0 +1,114 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+
+      - name: Set up Python
+        run: uv python install
+
+      - name: Install dependencies
+        run: uv sync
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Format check
+        run: uv run ruff format --check .
+
+      - name: Test
+        run: |
+          # Don't fail the step yet so the badge update below still runs; capture
+          # the real exit code and gate on it at the end.
+          set +e
+          uv run pytest --cov --cov-report=json --cov-report=term -q | tee test.log
+          echo "PYTEST_EXIT=${PIPESTATUS[0]}" >> "$GITHUB_ENV"
+          set -e
+
+      - name: Compute badge data
+        run: |
+          PASSED=$(grep -oE '[0-9]+ passed' test.log | grep -oE '[0-9]+' | tail -1 || true)
+          FAILED=$(grep -oE '[0-9]+ failed' test.log | grep -oE '[0-9]+' | tail -1 || true)
+          SKIPPED=$(grep -oE '[0-9]+ skipped' test.log | grep -oE '[0-9]+' | tail -1 || true)
+          XFAILED=$(grep -oE '[0-9]+ xfailed' test.log | grep -oE '[0-9]+' | tail -1 || true)
+          PASSED=${PASSED:-0}; FAILED=${FAILED:-0}; SKIPPED=${SKIPPED:-0}; XFAILED=${XFAILED:-0}
+
+          MSG=""
+          [ "$PASSED" -gt 0 ] && MSG="${PASSED} passed"
+          [ "$FAILED" -gt 0 ] && MSG="${MSG:+$MSG, }${FAILED} failed"
+          [ "$SKIPPED" -gt 0 ] && MSG="${MSG:+$MSG, }${SKIPPED} skipped"
+          [ "$XFAILED" -gt 0 ] && MSG="${MSG:+$MSG, }${XFAILED} xfailed"
+          MSG="${MSG:-0 tests}"
+          echo "TEST_BADGE_MSG=$MSG" >> "$GITHUB_ENV"
+
+          if [ "${PYTEST_EXIT:-1}" -ne 0 ] || [ "$FAILED" -gt 0 ]; then
+            echo "TEST_BADGE_COLOR=red" >> "$GITHUB_ENV"
+          elif [ "$SKIPPED" -gt 0 ]; then
+            echo "TEST_BADGE_COLOR=yellow" >> "$GITHUB_ENV"
+          else
+            echo "TEST_BADGE_COLOR=green" >> "$GITHUB_ENV"
+          fi
+
+          COVERAGE=$(uv run python -c "import json; print(round(json.load(open('coverage.json'))['totals']['percent_covered']))")
+          echo "COVERAGE=$COVERAGE" >> "$GITHUB_ENV"
+          if [ "$COVERAGE" -ge 80 ]; then
+            echo "COVERAGE_BADGE_COLOR=green" >> "$GITHUB_ENV"
+          elif [ "$COVERAGE" -ge 50 ]; then
+            echo "COVERAGE_BADGE_COLOR=yellow" >> "$GITHUB_ENV"
+          else
+            echo "COVERAGE_BADGE_COLOR=red" >> "$GITHUB_ENV"
+          fi
+
+      - name: Update badges gist
+        # Only on push to main (PRs from forks have no access to the secret).
+        if: github.ref == 'refs/heads/main'
+        uses: actions/github-script@v9
+        env:
+          GIST_ID: ${{ secrets.GIST_ID }}
+          TEST_BADGE_MSG: ${{ env.TEST_BADGE_MSG }}
+          TEST_BADGE_COLOR: ${{ env.TEST_BADGE_COLOR }}
+          COVERAGE: ${{ env.COVERAGE }}
+          COVERAGE_BADGE_COLOR: ${{ env.COVERAGE_BADGE_COLOR }}
+        with:
+          github-token: ${{ secrets.GIST_SECRET_TOKEN }}
+          script: |
+            await github.rest.gists.update({
+              gist_id: process.env.GIST_ID,
+              files: {
+                'tests.json': {
+                  content: JSON.stringify({
+                    schemaVersion: 1,
+                    label: 'Tests',
+                    namedLogo: 'pytest',
+                    message: process.env.TEST_BADGE_MSG,
+                    color: process.env.TEST_BADGE_COLOR,
+                    cacheSeconds: 180,
+                  }, null, 2),
+                },
+                'coverage.json': {
+                  content: JSON.stringify({
+                    schemaVersion: 1,
+                    label: 'Coverage',
+                    namedLogo: 'python',
+                    message: process.env.COVERAGE + '%',
+                    color: process.env.COVERAGE_BADGE_COLOR,
+                    cacheSeconds: 180,
+                  }, null, 2),
+                },
+              },
+            });
+
+      - name: Test gate
+        run: |
+          # Fail the workflow if tests failed (after the badge has been published).
+          [ "${PYTEST_EXIT:-1}" -eq 0 ]
