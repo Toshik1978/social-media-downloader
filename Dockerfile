@@ -28,4 +28,4 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --locked
 
 # Start application
-CMD ["uv", "run", "--script", "/app/social-media-downloader"]
+CMD ["uv", "run", "social-media-downloader"]

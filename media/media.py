@@ -17,8 +17,9 @@ class Medias:
     video_files: list[TemporaryFile]
     """Videos files."""
 
-    def __init__(self,
-                 photo_urls: list[str], gif_urls: list[str], video_urls: list[str], video_files: list[TemporaryFile]):
+    def __init__(
+        self, photo_urls: list[str], gif_urls: list[str], video_urls: list[str], video_files: list[TemporaryFile]
+    ):
         self.photo_urls = photo_urls
         self.gif_urls = gif_urls
         self.video_urls = video_urls
