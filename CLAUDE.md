@@ -27,14 +27,20 @@ file (loaded via `load_dotenv()`).
 ```bash
 uv run ruff check .          # lint
 uv run ruff format .         # format (config: line-length 120, rules E/F/I/UP/B)
-uv run pytest                # tests (tests/, pure logic: url matching, Medias, decorator)
+uv run pytest                # tests (tests/)
 uv run pytest --cov          # tests + coverage (config in [tool.coverage.run])
 ```
 
+Tests cover the full codebase (100%): the async Telegram handlers and the adapters are tested
+with `requests`/`pytubefix` mocked and a fake `Update`/`CallbackContext` (helpers in
+`tests/conftest.py`). `asyncio_mode = "auto"` (pytest-asyncio) means async tests need no decorator.
+The bot is built offline with a dummy token in an isolated cwd (the `bot` fixture).
+
 CI (`.github/workflows/ci.yml`) runs `ruff check`, `ruff format --check`, and `pytest --cov` on
-push to `main` and on PRs. There is no coverage gate (it's informational). On push to `main` it
-publishes Tests/Coverage badges by updating gist `12cd45e3eeec8924632d8f5ef6041735` (referenced in
-the README badge URLs). This needs repo secrets `GIST_ID` (set it to that gist id) and
+push to `main` and on PRs. There is no coverage gate (the badge is informational; green at ≥80%).
+On push to `main` it publishes Tests/Coverage badges by updating gist
+`12cd45e3eeec8924632d8f5ef6041735` (referenced in the README badge URLs). This needs repo secrets
+`GIST_ID` (set it to that gist id) and
 `GIST_SECRET_TOKEN` (a PAT with `gist` scope — must be created by a maintainer; the badge JSON is
 seeded so badges render even before the first CI publish).
 
