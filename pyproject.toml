@@ -7,7 +7,7 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
-    "python-telegram-bot==22.7",
+    "python-telegram-bot==22.8",
     "pytubefix==10.3.8",
     "requests==2.33.1",
     "urllib3==2.6.3",
