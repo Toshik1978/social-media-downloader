@@ -1,4 +1,4 @@
-from media.media import Medias
+from media.media import Medias, SocialMedia
 
 
 def test_medias_stores_all_four_lists():
@@ -21,3 +21,10 @@ def test_medias_empty():
     assert media.gif_urls == []
     assert media.video_urls == []
     assert media.video_files == []
+
+
+def test_socialmedia_base_methods_are_noops():
+    # The abstract base has no-op bodies; subclasses override them.
+    base = SocialMedia()
+    assert base.is_valid_url("x") is None
+    assert base.get_media("x") is None
