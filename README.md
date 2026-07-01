@@ -11,7 +11,7 @@ Supported sources:
 
 | Source | What it downloads | Backend |
 |--------|-------------------|---------|
-| **Twitter / X** (`twitter.com`, `x.com`, `t.co`) | Photos (upscaled to original quality), GIFs, videos | [vxtwitter](https://github.com/dylanpdx/BetterTwitterEmbeds) public API |
+| **Twitter / X** (`twitter.com`, `x.com`, `t.co`) | Photos (upscaled to original quality), GIFs, videos | [vxtwitter](https://github.com/dylanpdx/BetterTwitFix) public API |
 | **Instagram** (`instagram.com`) | Videos from posts | [instagram-looter2](https://rapidapi.com/) via RapidAPI (key required) |
 | **YouTube** (`youtube.com`, `youtu.be`) | Progressive video, best quality that fits Telegram's upload limit | [pytubefix](https://github.com/JuanBindez/pytubefix) |
 
