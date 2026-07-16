@@ -22,7 +22,7 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=5",
-    "ruff>=0.15.21",
+    "ruff>=0.15.22",
 ]
 
 [build-system]
