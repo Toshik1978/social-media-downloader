@@ -5,12 +5,12 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     commit-message:
       prefix: build
       include: scope
     groups:
-      python:
+      uv:
         patterns:
           - "*"
         update-types:
@@ -22,7 +22,7 @@ updates:
     directory: "/"
     schedule:
       interval: weekly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 10
     commit-message:
       prefix: ci
       include: scope
@@ -31,5 +31,6 @@ updates:
         patterns:
           - "*"
         update-types:
+          - major
           - minor
           - patch
