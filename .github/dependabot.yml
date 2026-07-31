@@ -26,11 +26,34 @@ updates:
     commit-message:
       prefix: ci
       include: scope
+
+    # EVERY action in this repository is pinned to a moving major tag (`@v4`,
+    # `@v7`), never to an exact `x.y.z`. Upstream repoints those tags on each
+    # release, so minor and patch updates arrive without a commit here and a PR
+    # proposing one is at best a no-op.
+    #
+    # At worst it is a regression. Dependabot does not know `@v4` is an alias:
+    # it reads the ref as the literal version "4", compares 4 < 4.5.2, and
+    # proposes `@v4` -> `@v4.5.2`. That converts a self-updating alias into a
+    # frozen pin needing a PR for every future patch, and if `v4` already points
+    # past v4.5.2 it moves the action *backwards* while reading as an upgrade.
+    #
+    # Major bumps are deliberately still proposed: those genuinely require a
+    # commit here, because `@v4` does not become `@v7` on its own.
+    #
+    # IF YOU EVER PIN AN ACTION TO AN EXACT x.y.z, this wildcard becomes wrong
+    # for it — that pin does need patch PRs. Replace the `"*"` with an explicit
+    # list of the major-tagged actions at that point.
+    ignore:
+      - dependency-name: "*"
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-patch
+
+    # Only majors survive the ignore above, so that is all the group covers.
     groups:
       github-actions:
         patterns:
           - "*"
         update-types:
           - major
-          - minor
-          - patch
