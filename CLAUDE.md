@@ -90,10 +90,6 @@ The entry point is `main.py` (`main:main`). Adapters + the bot:
   `[tool.hatch.build.targets.wheel].only-include`. Add new top-level modules/packages there or they
   won't ship in the wheel. Imports are absolute (`from bot...`, `from media...`).
 
-## Git conventions
-
-- **Never add `Co-Authored-By` trailers** (or any AI attribution) to commit messages.
-
 ## Known limitations
 
 - The Instagram adapter handles single videos (`GraphVideo`) only — image posts and carousels are
