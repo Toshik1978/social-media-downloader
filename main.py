@@ -8,6 +8,7 @@ from bot.social_media_bot import SocialMediaBot
 from instagram.instagram import Instagram
 from twitter.twitter import Twitter
 from yt.youtube import YouTube
+from yt.youtube_music import YouTubeMusic
 
 
 def main() -> None:
@@ -22,10 +23,12 @@ def main() -> None:
         Twitter(logger),
         Instagram(logger, os.getenv("RAPID_API_KEY") or ""),
         YouTube(logger, constants.FileSizeLimit.FILESIZE_UPLOAD),
+        YouTubeMusic(logger, constants.FileSizeLimit.FILESIZE_UPLOAD),
     ]
     # Create a bot and run it
     user_ids = list(map(int, (os.getenv("USER_ID") or "").split(",")))
-    bot = SocialMediaBot(logger, sm, os.getenv("BOT_TOKEN") or "", user_ids)
+    captions = (os.getenv("CAPTIONS") or "true").strip().lower() not in ["0", "false", "no", "off"]
+    bot = SocialMediaBot(logger, sm, os.getenv("BOT_TOKEN") or "", user_ids, captions)
     bot.run_polling()
 
 

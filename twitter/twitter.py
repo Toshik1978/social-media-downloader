@@ -5,7 +5,7 @@ from urllib.parse import urlparse, urlsplit
 
 import requests
 
-from media.media import Medias, SocialMedia
+from media.media import Gif, Medias, Photo, SocialMedia, Video
 
 
 class Twitter(SocialMedia):
@@ -32,13 +32,20 @@ class Twitter(SocialMedia):
         tweet_id = self.__extract_tweet_ids(url)
         if tweet_id is None:
             self.__logger.info("No supported tweet link found")
-            return Medias([], [], [], [])
+            return Medias()
 
-        tweet_media = self.__scrape_media(tweet_id)
+        tweet = self.__scrape_tweet(tweet_id)
+        tweet_media = tweet["media_extended"]
         photos = [media for media in tweet_media if media["type"] == "image"]
         gifs = [media for media in tweet_media if media["type"] == "gif"]
         videos = [media for media in tweet_media if media["type"] == "video"]
-        return Medias(self.__get_photos(photos), self.__get_gifs(gifs), self.__get_videos(videos), [])
+        # Videos stay standalone: they can exceed the 20 MB Telegram fetches by URL, which fails a media group.
+        return Medias(
+            album=self.__get_photos(photos),
+            gifs=self.__get_gifs(gifs),
+            videos=self.__get_videos(videos),
+            caption=self.__get_caption(tweet),
+        )
 
     def __extract_tweet_ids(self, url: str) -> str | None:
         # For t.co links
@@ -55,13 +62,13 @@ class Twitter(SocialMedia):
             return match_id.group(1)
         return None
 
-    def __scrape_media(self, tweet_id: str) -> list[dict]:
+    def __scrape_tweet(self, tweet_id: str) -> dict:
         self.__logger.info(f"Scraping tweet ID {tweet_id}")
 
         r = requests.get(f"https://api.vxtwitter.com/Twitter/status/{tweet_id}", timeout=30)
         r.raise_for_status()
         try:
-            return r.json()["media_extended"]
+            return r.json()
         except requests.exceptions.JSONDecodeError as exc:
             # The api likely returned an HTML page; try looking for an error message:
             # <meta content="{message}" property="og:description" />
@@ -69,7 +76,11 @@ class Twitter(SocialMedia):
                 raise Exception(f"API returned error: {html.unescape(match.group(1))}") from exc
             raise
 
-    def __get_photos(self, photos: list[dict]) -> list[str]:
+    def __get_caption(self, tweet: dict) -> str | None:
+        # Tweets with media usually end with t.co links pointing back at the media itself.
+        return re.sub(r"(\s*https://t\.co/\w+)+\s*$", "", tweet.get("text") or "") or None
+
+    def __get_photos(self, photos: list[dict]) -> list[Photo]:
         group = []
         for photo in photos:
             photo_url = photo["url"]
@@ -82,24 +93,30 @@ class Twitter(SocialMedia):
                 requests.head(new_url, timeout=30).raise_for_status()
 
                 self.__logger.info("New photo url: " + new_url)
-                group.append(new_url)
+                group.append(Photo(new_url))
             except requests.HTTPError:
                 # Use original URL
-                group.append(photo_url)
+                group.append(Photo(photo_url))
         return group
 
-    def __get_gifs(self, gifs: list[dict]) -> list[str]:
+    def __get_gifs(self, gifs: list[dict]) -> list[Gif]:
         group = []
         for gif in gifs:
             gif_url = gif["url"]
             self.__logger.info(f"Gif url: {gif_url}")
-            group.append(gif_url)
+            group.append(Gif(gif_url, **self.__get_metadata(gif)))
         return group
 
-    def __get_videos(self, videos: list[dict]) -> list[str]:
+    def __get_videos(self, videos: list[dict]) -> list[Video]:
         group = []
         for video in videos:
             video_url = video["url"]
             self.__logger.info(f"Video url: {video_url}")
-            group.append(video_url)
+            group.append(Video(video_url, **self.__get_metadata(video)))
         return group
+
+    def __get_metadata(self, media: dict) -> dict:
+        # The API reports 0 ms for media without a duration; missing values are left to Telegram.
+        size = media.get("size") or {}
+        duration = round((media.get("duration_millis") or 0) / 1000) or None
+        return {"duration": duration, "width": size.get("width"), "height": size.get("height")}

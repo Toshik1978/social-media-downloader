@@ -1,26 +1,37 @@
-from media.media import Medias, SocialMedia
+from media.media import Audio, Gif, Medias, Photo, SocialMedia, Video
 
 
-def test_medias_stores_all_four_lists():
-    photos = ["p1"]
-    gifs = ["g1"]
-    videos = ["v1"]
-    files = []
-    media = Medias(photos, gifs, videos, files)
+def test_medias_stores_all_lists():
+    album = [Photo("p1"), Video("v0")]
+    gifs = [Gif("g1")]
+    videos = [Video("v1")]
+    audios = [Audio(None, "Title", "Artist", 10)]
+    media = Medias(album, gifs, videos, audios)
 
-    assert media.photo_urls is photos
-    assert media.gif_urls is gifs
-    assert media.video_urls is videos
-    assert media.video_files is files
+    assert media.album is album
+    assert media.gifs is gifs
+    assert media.videos is videos
+    assert media.audios is audios
 
 
 def test_medias_empty():
-    media = Medias([], [], [], [])
+    media = Medias()
 
-    assert media.photo_urls == []
-    assert media.gif_urls == []
-    assert media.video_urls == []
-    assert media.video_files == []
+    assert media.album == []
+    assert media.gifs == []
+    assert media.videos == []
+    assert media.audios == []
+
+
+def test_medias_defaults_are_not_shared():
+    a, b = Medias(), Medias()
+    a.album.append(Photo("p1"))
+    assert b.album == []
+
+
+def test_video_and_gif_metadata_is_optional():
+    assert Video("v1") == Video("v1", None, None, None)
+    assert Gif("g1") == Gif("g1", None, None, None)
 
 
 def test_socialmedia_base_methods_are_noops():
