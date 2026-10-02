@@ -8,6 +8,9 @@ import telegram.error
 from telegram import BotCommand, Update
 from telegram.ext import Application, CallbackContext, CommandHandler, MessageHandler, PicklePersistence, filters
 
+MEDIA_WRITE_TIMEOUT = 300
+"""Seconds allowed to upload a media file (50 MB at ~1.5 Mbit/s)."""
+
 """Command description decorator."""
 
 
@@ -36,9 +39,16 @@ class TelegramBot:
         makedirs(".data", exist_ok=True)  # Create data
         persistence = PicklePersistence(filepath=".data/persistence")
 
-        # Create an application
+        # Create an application. Uploads can be close to the 50 MB limit, and PTB's default 20 s media write
+        # timeout fails them on slower links. Widening the except clauses instead isn't safe: TimedOut can fire
+        # even when Telegram got the file, which would add a duplicate fallback message.
         self.application = (
-            Application.builder().token(token).persistence(persistence).post_init(self._post_init).build()
+            Application.builder()
+            .token(token)
+            .persistence(persistence)
+            .media_write_timeout(MEDIA_WRITE_TIMEOUT)
+            .post_init(self._post_init)
+            .build()
         )
         self.__add_dispatchers()
         self.application.add_error_handler(self._error_handler)

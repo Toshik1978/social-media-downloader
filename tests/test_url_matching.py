@@ -5,6 +5,7 @@ import pytest
 from instagram.instagram import Instagram
 from twitter.twitter import Twitter
 from yt.youtube import YouTube
+from yt.youtube_music import YouTubeMusic
 
 logger = logging.getLogger("test")
 
@@ -22,6 +23,11 @@ def instagram():
 @pytest.fixture
 def youtube():
     return YouTube(logger, 1024)
+
+
+@pytest.fixture
+def youtube_music():
+    return YouTubeMusic(logger, 1024)
 
 
 @pytest.mark.parametrize(
@@ -96,7 +102,33 @@ def test_youtube_accepts_known_hosts(youtube, url):
         "https://instagram.com/p/abc/",
         "ftp://youtube.com/watch?v=abc",
         "https://youtube.evil.com/watch?v=abc",
+        "https://music.youtube.com/watch?v=abc",
     ],
 )
 def test_youtube_rejects_others(youtube, url):
     assert youtube.is_valid_url(url) is False
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://music.youtube.com/watch?v=0SYs71ylyjk&si=lIQIDzhKC2ljMHtB",
+        "http://music.youtube.com/watch?v=abc",
+    ],
+)
+def test_youtube_music_accepts_known_hosts(youtube_music, url):
+    assert youtube_music.is_valid_url(url) is True
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://youtube.com/watch?v=abc",
+        "https://www.youtube.com/watch?v=abc",
+        "https://youtu.be/abc",
+        "ftp://music.youtube.com/watch?v=abc",
+        "https://music.youtube.com.evil.com/watch?v=abc",
+    ],
+)
+def test_youtube_music_rejects_others(youtube_music, url):
+    assert youtube_music.is_valid_url(url) is False

@@ -5,15 +5,16 @@
 # Social Media Downloader
 
 A self-hosted Telegram bot that downloads media from social media links and sends it back to you
-in the best available quality. Send it a link, get the photos / GIFs / videos in chat.
+in the best available quality. Send it a link, get the photos / GIFs / videos / audio in chat.
 
 Supported sources:
 
 | Source | What it downloads | Backend |
 |--------|-------------------|---------|
 | **Twitter / X** (`twitter.com`, `x.com`, `t.co`) | Photos (upscaled to original quality), GIFs, videos | [vxtwitter](https://github.com/dylanpdx/BetterTwitFix) public API |
-| **Instagram** (`instagram.com`) | Videos from posts | [instagram-looter2](https://rapidapi.com/) via RapidAPI (key required) |
+| **Instagram** (`instagram.com`) | Photos and videos from posts, reels and carousels | [instagram-looter2](https://rapidapi.com/) via RapidAPI (key required) |
 | **YouTube** (`youtube.com`, `youtu.be`) | Progressive video, best quality that fits Telegram's upload limit | [pytubefix](https://github.com/JuanBindez/pytubefix) |
+| **YouTube Music** (`music.youtube.com`) | Audio only (highest bitrate M4A/AAC), sent as a music track with title, artist and duration | [pytubefix](https://github.com/JuanBindez/pytubefix) |
 
 The bot is **whitelist-only**: it ignores everyone except the user IDs you configure.
 
@@ -36,6 +37,7 @@ loaded automatically — see [`.env.dist`](.env.dist)):
 | `BOT_TOKEN` | yes | Telegram bot token from [@BotFather](https://t.me/BotFather) |
 | `USER_ID` | yes | Comma-separated list of Telegram user IDs allowed to use the bot (e.g. `123,456`) |
 | `RAPID_API_KEY` | no | [RapidAPI](https://rapidapi.com/) key for the `instagram-looter2` API. Required only for Instagram downloads |
+| `CAPTIONS` | no | Send the post text (tweet text, Instagram caption, YouTube title) as the media caption. Default `true`; set `false` to send media only |
 
 To find your numeric Telegram user ID, message a bot such as [@userinfobot](https://t.me/userinfobot).
 
@@ -78,12 +80,15 @@ main.py                            entry point: loads env, wires adapters, start
 └── twitter/twitter.py             Twitter/X adapter
 └── instagram/instagram.py         Instagram adapter
 └── yt/youtube.py                  YouTube adapter
+└── yt/youtube_music.py            YouTube Music adapter (audio only)
 ```
 
 Each adapter implements `SocialMedia` (`is_valid_url` + `get_media`). The bot tries every adapter
-whose `is_valid_url` matches the incoming link and replies with whatever media is found. Videos are
+whose `is_valid_url` matches the incoming link and replies with whatever media is found. Photos (and
+the videos of an Instagram carousel, keeping the carousel's order) are sent as albums of up to 10. The post text, when there is one, becomes the caption of the first message
+sent for that link (truncated to Telegram's 1024-character limit). Videos are
 sent by direct URL when small enough, uploaded from a temporary file when larger, or returned as a
-direct link when they exceed Telegram's upload limit.
+direct link when they exceed Telegram's upload limit. Audio is uploaded as a Telegram music track.
 
 Per-user stats are persisted to `.data/persistence` via `python-telegram-bot`'s `PicklePersistence`.
 
@@ -106,8 +111,9 @@ push builds and publishes the Docker image.
 
 ## Limitations
 
-- The Instagram adapter currently handles single videos (`GraphVideo`) only — image posts and
-  carousels are not downloaded.
+- The YouTube Music adapter downloads single tracks only — playlist and album links are not supported.
+- Tweets mixing photos and videos are sent as photos first, then videos. A carousel video too large
+  for Telegram to fetch by URL (over 20 MB) makes its album fall back to the same photos-then-videos order.
 - Twitter/Instagram downloads depend on third-party APIs that may rate-limit or change.
 
 ## Special thanks

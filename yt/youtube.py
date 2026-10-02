@@ -1,11 +1,12 @@
 from logging import Logger
 from tempfile import TemporaryFile
+from typing import IO
 from urllib.parse import urlparse
 
 from pytubefix import Stream
 from pytubefix import YouTube as YTube
 
-from media.media import Medias, SocialMedia
+from media.media import Medias, SocialMedia, Video
 
 
 class YouTube(SocialMedia):
@@ -21,8 +22,11 @@ class YouTube(SocialMedia):
     def is_valid_url(self, url: str) -> bool:
         """Check if URL points to valid social media data."""
         parsed_url = urlparse(url)
-        return parsed_url.scheme in ["http", "https"] and (
-            parsed_url.netloc.endswith("youtube.com") or parsed_url.netloc.endswith("youtu.be")
+        # YouTube Music links are handled by the YouTubeMusic adapter (audio only).
+        return (
+            parsed_url.scheme in ["http", "https"]
+            and parsed_url.netloc != "music.youtube.com"
+            and (parsed_url.netloc.endswith("youtube.com") or parsed_url.netloc.endswith("youtu.be"))
         )
 
     def get_media(self, url: str) -> Medias:
@@ -35,15 +39,18 @@ class YouTube(SocialMedia):
         for stream in streams:
             if stream.filesize < self.__limit:
                 # We found the best candidate.
-                return self.__download_stream(stream)
+                video = Video(self.__download_stream(stream), yt.length, stream.width, stream.height)
+                return Medias(videos=[video], caption=yt.title)
 
         self.__logger.info(f"Didn't find an acceptable stream: {url}")
-        return Medias([], [], [], [])
+        return Medias()
 
-    def __download_stream(self, stream: Stream) -> Medias:
+    def __download_stream(self, stream: Stream) -> IO[bytes]:
         self.__logger.info(f"Downloading {stream.url}")
 
         f = TemporaryFile()
-        f.writelines(stream.iter_chunks(262144))
+        # No chunk size: pytubefix treats it as the HTTP range size per request (default 9 MB) and sets it
+        # module-wide, so a small value means many more requests for every later download too.
+        f.writelines(stream.iter_chunks())
         f.seek(0)
-        return Medias([], [], [], [f])
+        return f

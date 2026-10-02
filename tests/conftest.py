@@ -19,6 +19,7 @@ def make_update(text: str = "", user_id: int = 1) -> MagicMock:
     message.reply_media_group = AsyncMock()
     message.reply_animation = AsyncMock()
     message.reply_video = AsyncMock()
+    message.reply_audio = AsyncMock()
     # reply_text returns a message-like object whose delete() is awaitable
     sent = MagicMock()
     sent.delete = AsyncMock()
