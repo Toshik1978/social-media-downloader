@@ -1,6 +1,6 @@
 [project]
 name = "social-media-downloader"
-version = "2.1.2"
+version = "2.2.0"
 description = "Social Media Downloader Telegram Bot"
 readme = "README.md"
 license = "MIT"
@@ -8,10 +8,10 @@ license-files = ["LICENSE"]
 requires-python = ">=3.14"
 dependencies = [
     "python-telegram-bot==22.8",
-    "pytubefix==11.1.0",
+    "pytubefix==11.2.0",
     "requests==2.34.2",
     "urllib3==2.8.0",
-    "python-dotenv==1.2.3",
+    "python-dotenv==1.2.4",
 ]
 
 [project.scripts]
@@ -22,7 +22,7 @@ dev = [
     "pytest>=8",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=5",
-    "ruff>=0.16.9",
+    "ruff>=0.16.10",
 ]
 
 [build-system]
