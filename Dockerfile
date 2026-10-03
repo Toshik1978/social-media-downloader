@@ -3,6 +3,9 @@ FROM ghcr.io/astral-sh/uv:python3.14-alpine
 # Install the project into `/app`
 WORKDIR /app
 
+# ffmpeg joins YouTube's separate video/audio streams and re-encodes videos over Telegram's upload limit
+RUN apk add --no-cache ffmpeg
+
 # Enable bytecode compilation
 ENV UV_COMPILE_BYTECODE=1
 

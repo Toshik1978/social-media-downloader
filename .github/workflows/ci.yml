@@ -17,6 +17,9 @@ jobs:
       - name: Set up Python
         run: uv python install
 
+      - name: Install ffmpeg
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends ffmpeg
+
       - name: Install dependencies
         run: uv sync
 
