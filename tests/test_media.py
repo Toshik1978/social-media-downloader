@@ -39,3 +39,11 @@ def test_socialmedia_base_methods_are_noops():
     base = SocialMedia()
     assert base.is_valid_url("x") is None
     assert base.get_media("x") is None
+
+
+def test_video_fallbacks_default_empty_and_keyword():
+    assert Video("http://v/1.mp4").fallbacks == []
+    video = Video("http://v/1080.mp4", 10, 1920, 1080, fallbacks=["http://v/720.mp4"])
+    assert video.fallbacks == ["http://v/720.mp4"]
+    # Each instance gets its own list
+    assert Video("a").fallbacks is not Video("b").fallbacks

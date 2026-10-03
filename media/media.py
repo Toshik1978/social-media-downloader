@@ -44,6 +44,9 @@ class Video:
     height: int | None = None
     """Video height."""
 
+    fallbacks: list[str] = field(default_factory=list)
+    """Lower-quality URLs of the same video, best first."""
+
 
 @dataclass
 class Audio:
