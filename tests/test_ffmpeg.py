@@ -163,6 +163,27 @@ def test_transcode_odd_sizes_and_pixel_formats(tmp_path, source, expected):
     assert ((int(width), int(height)), pix_fmt.strip()) == (expected, "yuv420p")
 
 
+@requires_ffmpeg
+def test_transcode_caps_frame_rate(tmp_path):
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", "testsrc=size=640x360:rate=60:duration=1"]
+        + ["-c:v", "libx264", str(clip)],
+        check=True,
+        capture_output=True,
+    )
+    with ffmpeg.transcode([str(clip)], 1, 1_000_000) as f:
+        rate = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=r_frame_rate", "-of", "csv=p=0", "-"],
+            stdin=f,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+    # Half the frames to encode for 60 fps sources
+    assert rate == "30/1"
+
+
 def test_transcode_below_floor_does_not_run(monkeypatch):
     def fail(*args, **kwargs):
         raise AssertionError("ffmpeg must not run")
@@ -185,7 +206,9 @@ def test_transcode_command_line(monkeypatch, duration, height):
 
     ((args, timeout),) = calls
     bitrate = str(ffmpeg.video_bitrate(duration, 50_000_000))
-    assert timeout == ffmpeg.TRANSCODE_TIMEOUT
+    # At least 10 minutes, 3 s per second of video beyond that: small hosts encode slowly
+    assert timeout == max(600, 3 * duration)
+    assert args[args.index("-fpsmax") + 1] == "30"
     assert args[:2] == ["-i", "http://v/1.mp4"]
     assert ["-map", "0:v:0", "-map", "0:a:0?"] == args[2:6]
     assert args[args.index("-vf") + 1] == (

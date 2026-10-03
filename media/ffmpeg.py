@@ -1,7 +1,7 @@
 """ffmpeg/ffprobe helpers that fit videos into Telegram's upload limit.
 
 Everything here is synchronous and blocks for up to minutes: call it from a worker thread
-(`asyncio.to_thread`), never from the event loop.
+(the bot's `_run_blocking`), never from the event loop.
 """
 
 import logging
@@ -26,8 +26,14 @@ HD_VIDEO_BITRATE = 1_000_000
 CONTAINER_MARGIN_PERCENT = 95
 """Share of the size limit given to the streams; the rest absorbs container overhead and bitrate overshoot."""
 
+MAX_FPS = 30
+"""Frame rate cap of a re-encode: 60 fps sources take half the work."""
+
 TRANSCODE_TIMEOUT = 600
-"""Seconds a re-encode may take."""
+"""Minimum seconds a re-encode may take; longer videos get `TRANSCODE_SECONDS_PER_SECOND` per second of video."""
+
+TRANSCODE_SECONDS_PER_SECOND = 3
+"""Re-encode time budget per second of video, for small hosts that encode slower than real time."""
 
 COPY_TIMEOUT = 60
 """Seconds a mux or probe may take."""
@@ -95,12 +101,12 @@ def transcode(inputs: list[str], duration: int, limit: int) -> IO[bytes] | None:
     args = [arg for source in inputs for arg in ("-i", source)]
     args += ["-map", "0:v:0", "-map", f"{len(inputs) - 1}:a:0?", "-vf", scale]
     # 8-bit 4:2:0 is the only H.264 flavour every Telegram client plays; 10-bit or 4:4:4 sources would carry over.
-    args += ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
+    args += ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p", "-fpsmax", str(MAX_FPS)]
     args += ["-b:v", str(bitrate), "-maxrate", str(bitrate), "-bufsize", str(2 * bitrate)]
     args += ["-c:a", "aac", "-b:a", str(AUDIO_BITRATE)]
     try:
         with _transcode_lock:
-            f = _run_to_file(args, TRANSCODE_TIMEOUT)
+            f = _run_to_file(args, max(TRANSCODE_TIMEOUT, TRANSCODE_SECONDS_PER_SECOND * duration))
     except (subprocess.SubprocessError, OSError) as e:
         logger.warning(f"ffmpeg failed to re-encode: {e.__class__.__qualname__}: {e}")
         return None

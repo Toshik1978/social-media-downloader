@@ -1,5 +1,6 @@
 import asyncio
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
+from concurrent.futures import ThreadPoolExecutor
 from itertools import batched
 from logging import Logger
 from tempfile import TemporaryFile
@@ -17,6 +18,38 @@ from media.media import Audio, Gif, Medias, Photo, SocialMedia, Video
 DOWNLOAD_CHUNK_SIZE = 256 * 1024
 """Read buffer for streaming a video to a temp file: big enough to keep per-chunk overhead low, small
 enough to keep memory flat."""
+
+BLOCKING_WORKERS = 32
+"""Threads for adapters, downloads and ffmpeg. Fixed rather than CPU-based like asyncio's default pool: most of them
+just wait, on the network or for their turn to re-encode."""
+
+SLOW_DOWNLOAD_NOTICE = 5
+"""Seconds an adapter may take before the user is told the download is still running."""
+
+_blocking_pool = ThreadPoolExecutor(max_workers=BLOCKING_WORKERS, thread_name_prefix="media")
+
+
+async def _run_blocking[T](fn: Callable[..., T], *args) -> T:
+    """Run blocking work (network, disk, ffmpeg) off the event loop."""
+
+    return await asyncio.get_running_loop().run_in_executor(_blocking_pool, fn, *args)
+
+
+def _open_video(url: str) -> tuple[requests.Response, int]:
+    """Start streaming a video and read its size."""
+
+    request = requests.get(url, stream=True, timeout=30)
+    try:
+        request.raise_for_status()
+        return request, int(request.headers["Content-Length"])
+    except BaseException:
+        request.close()
+        raise
+
+
+def _save_video(request: requests.Response, f: IO[bytes]) -> None:
+    for chunk in request.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+        f.write(chunk)
 
 
 class SocialMediaBot(TelegramBot):
@@ -91,7 +124,7 @@ class SocialMediaBot(TelegramBot):
         for social in self.__sm:
             if social.is_valid_url(url):
                 try:
-                    media = await asyncio.to_thread(social.get_media, url)
+                    media = await self.__get_media(update, social, url)
                 except Exception as e:
                     self._log(
                         update,
@@ -117,6 +150,20 @@ class SocialMediaBot(TelegramBot):
 
         if not is_found:
             await update.effective_message.reply_text("No media found", do_quote=True)
+
+    async def __get_media(self, update: Update, social: SocialMedia, url: str) -> Medias:
+        """Run the adapter off the event loop; tell the user when it takes a while (YouTube downloads, re-encodes)."""
+
+        task = asyncio.ensure_future(_run_blocking(social.get_media, url))
+        done, _ = await asyncio.wait({task}, timeout=SLOW_DOWNLOAD_NOTICE)
+        if done:
+            return task.result()
+
+        message = await update.effective_message.reply_text("Downloading, this might take a while…", do_quote=True)
+        try:
+            return await task
+        finally:
+            await message.delete()
 
     def __get_caption(self, media: Medias) -> str | None:
         if not self.__captions or not media.caption or not (caption := media.caption.strip()):
@@ -211,13 +258,16 @@ class SocialMediaBot(TelegramBot):
             context.bot_data["stats"][update.effective_user.id]["media_downloaded"] += 1
 
     async def __reply_video_url(self, update: Update, video: Video, caption: str | None) -> None:
-        # Send the best version that fits; when none does, try re-encoding the smallest one.
-        urls = [video.source, *video.fallbacks]
+        # Send the best version that fits; when none does, try re-encoding the smallest one that responded.
+        too_large = None
         try:
-            for url in urls:
-                request = requests.get(url, stream=True, timeout=30)
-                request.raise_for_status()
-                video_size = int(request.headers["Content-Length"])
+            for url in [video.source, *video.fallbacks]:
+                try:
+                    request, video_size = await _run_blocking(_open_video, url)
+                except (requests.RequestException, KeyError, ValueError) as e:
+                    self._log(update, "info", f"Skipping video version ({e.__class__.__qualname__}: {e}): {url}")
+                    continue
+
                 if video_size <= constants.FileSizeLimit.FILESIZE_DOWNLOAD:
                     request.close()
                     # Try sending by url
@@ -242,10 +292,9 @@ class SocialMediaBot(TelegramBot):
                         "Video is too large for direct download\nUsing upload method (this might take a bit longer)",
                         do_quote=True,
                     )
-                    with TemporaryFile() as tf:
+                    with request, TemporaryFile() as tf:
                         self._log(update, "info", f"Downloading video (Content-length: {video_size})")
-                        for chunk in request.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
-                            tf.write(chunk)
+                        await _run_blocking(_save_video, request, tf)
                         self._log(update, "info", "Video downloaded, uploading to Telegram")
                         tf.seek(0)
                         await update.effective_message.reply_video(
@@ -263,18 +312,25 @@ class SocialMediaBot(TelegramBot):
 
                 self._log(update, "info", f"Video size ({video_size}) is bigger than FILESIZE_UPLOAD: {url}")
                 request.close()
+                too_large = url
 
-            if not await self.__reply_video_transcoded(update, video, urls[-1], caption):
+            if too_large is None:
+                self._log(update, "info", "No video version could be fetched, sending direct link")
+                await self.__reply_video_error_link(update, video)
+            elif not await self.__reply_video_transcoded(update, video, too_large, caption):
                 self._log(update, "info", "Video is too large, sending direct link")
                 await update.effective_message.reply_text(
                     f"Video is too large for Telegram upload. Direct video link:\n{video.source}", do_quote=True
                 )
-        except (requests.HTTPError, KeyError, telegram.error.BadRequest, requests.exceptions.ConnectionError) as e:
+        except (requests.RequestException, telegram.error.BadRequest) as e:
             self._log(update, "info", f"{e.__class__.__qualname__}: {e}")
             self._log(update, "info", "Error occurred when trying to send video, sending direct link")
-            await update.effective_message.reply_text(
-                f"Error occurred when trying to send video. Direct link:\n{video.source}", do_quote=True
-            )
+            await self.__reply_video_error_link(update, video)
+
+    async def __reply_video_error_link(self, update: Update, video: Video) -> None:
+        await update.effective_message.reply_text(
+            f"Error occurred when trying to send video. Direct link:\n{video.source}", do_quote=True
+        )
 
     async def __reply_video_transcoded(self, update: Update, video: Video, url: str, caption: str | None) -> bool:
         """Re-encode the video to fit the upload limit and send it. False if that isn't possible."""
@@ -283,7 +339,7 @@ class SocialMediaBot(TelegramBot):
         if not ffmpeg.available():
             self._log(update, "info", "ffmpeg is not installed, can't compress the video")
             return False
-        duration = video.duration or await asyncio.to_thread(ffmpeg.duration, url)
+        duration = video.duration or await _run_blocking(ffmpeg.duration, url)
         if not duration or ffmpeg.video_bitrate(duration, limit) is None:
             self._log(update, "info", f"Video is too long to compress (duration: {duration})")
             return False
@@ -293,7 +349,7 @@ class SocialMediaBot(TelegramBot):
             "Video is too large, compressing it (this might take a while)", do_quote=True
         )
         try:
-            f = await asyncio.to_thread(ffmpeg.transcode, [url], duration, limit)
+            f = await _run_blocking(ffmpeg.transcode, [url], duration, limit)
             if f is None:
                 self._log(update, "info", "Video compression failed")
                 return False

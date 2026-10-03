@@ -56,7 +56,8 @@ class YouTube(SocialMedia):
         # H.264 only: not every Telegram client plays AV1 or VP9.
         streams = yt.streams.filter(adaptive=True, only_video=True, file_extension="mp4").order_by("resolution").desc()
         videos = [stream for stream in streams if stream.video_codec.startswith("avc1")]
-        audio = yt.streams.get_audio_only()
+        # The original-language track: on dubbed videos the best bitrate alone may pick a translation.
+        audio = yt.streams.get_default_audio_track().get_audio_only()
         if not videos or audio is None:
             return None
 

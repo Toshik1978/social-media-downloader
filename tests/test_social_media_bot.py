@@ -1,5 +1,6 @@
 import io
 import threading
+import time
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -90,14 +91,47 @@ async def test_adapters_run_in_a_worker_thread(bot):
 
     class ThreadRecordingAdapter(FakeAdapter):
         def get_media(self, url: str) -> Medias:
-            threads.append(threading.get_ident())
+            threads.append(threading.current_thread().name)
             return super().get_media(url)
 
     bot._SocialMediaBot__sm = [ThreadRecordingAdapter()]
     update, context = make_update(text="x"), make_context()
     await bot.download_message_handler(update, context)
-    # Downloads and re-encodes must not block the event loop
-    assert threads and threads[0] != threading.get_ident()
+    # Downloads and re-encodes must not block the event loop, and run in the bot's own (large) pool
+    assert len(threads) == 1 and threads[0].startswith("media")
+    # A quick adapter gets no "downloading" notice
+    assert texts(update) == ["No media found"]
+
+
+async def test_slow_adapter_gets_a_status_message(bot, monkeypatch):
+    monkeypatch.setattr("bot.social_media_bot.SLOW_DOWNLOAD_NOTICE", 0.01)
+
+    class SlowAdapter(FakeAdapter):
+        def get_media(self, url: str) -> Medias:
+            time.sleep(0.2)
+            return super().get_media(url)
+
+    bot._SocialMediaBot__sm = [SlowAdapter(Medias(gifs=[Gif("http://g/1.gif")]))]
+    update, context = make_update(text="x"), make_context()
+    await bot.download_message_handler(update, context)
+    assert texts(update) == ["Downloading, this might take a while…"]
+    update.effective_message.reply_text.return_value.delete.assert_awaited_once()
+    update.effective_message.reply_animation.assert_awaited_once()
+
+
+async def test_slow_adapter_failure_still_removes_status_message(bot, monkeypatch):
+    monkeypatch.setattr("bot.social_media_bot.SLOW_DOWNLOAD_NOTICE", 0.01)
+
+    class SlowFailingAdapter(FakeAdapter):
+        def get_media(self, url: str) -> Medias:
+            time.sleep(0.2)
+            raise RuntimeError("403")
+
+    bot._SocialMediaBot__sm = [SlowFailingAdapter()]
+    update, context = make_update(text="x"), make_context()
+    await bot.download_message_handler(update, context)
+    update.effective_message.reply_text.return_value.delete.assert_awaited_once()
+    assert texts(update)[-1] == "No media found"
 
 
 async def test_download_photos(bot):
@@ -470,18 +504,73 @@ async def test_reply_video_compression_failure_links_best_variant(bot, monkeypat
     update.effective_message.reply_video.assert_not_awaited()
 
 
-async def test_reply_video_fallback_error_links_best_variant(bot, monkeypatch):
+def broken_response(kind: str) -> MagicMock:
+    response = fake_response(1024)
+    if kind == "http":
+        response.raise_for_status.side_effect = requests.HTTPError("403")
+    else:
+        response.headers = CaseInsensitiveDict()
+    return response
+
+
+@pytest.mark.parametrize("kind", ["http", "no-length"])
+async def test_reply_video_unreachable_versions_are_skipped(bot, monkeypatch, kind):
+    responses = {
+        "http://v/1080.mp4": broken_response(kind),
+        "http://v/720.mp4": broken_response(kind),
+        "http://v/360.mp4": fake_response(1024),
+    }
+    monkeypatch.setattr(requests, "get", lambda url, *a, **k: responses[url])
+    update, context = make_update(), stats_context()
+    video = Video("http://v/1080.mp4", fallbacks=["http://v/720.mp4", "http://v/360.mp4"])
+    await bot._reply_videos(update, context, [video])
+    update.effective_message.reply_video.assert_awaited_once_with(
+        video="http://v/360.mp4", duration=None, width=None, height=None, caption=None, do_quote=True
+    )
+    responses["http://v/1080.mp4"].close.assert_called_once()
+
+
+async def test_reply_video_compresses_smallest_reachable_version(bot, monkeypatch):
+    responses = {"http://v/1080.mp4": fake_response(UPLOAD * 3), "http://v/720.mp4": broken_response("http")}
+    monkeypatch.setattr(requests, "get", lambda url, *a, **k: responses[url])
+    calls = patch_ffmpeg(monkeypatch, transcoded=io.BytesIO(b"x"))
+    update, context = make_update(), stats_context()
+    await bot._reply_videos(update, context, [Video("http://v/1080.mp4", 262, fallbacks=["http://v/720.mp4"])])
+    assert calls == [(["http://v/1080.mp4"], 262, UPLOAD)]
+
+
+@pytest.mark.parametrize(
+    "error", [requests.Timeout("read timed out"), requests.exceptions.ChunkedEncodingError("connection dropped")]
+)
+async def test_reply_video_network_errors_send_link(bot, monkeypatch, error):
     def fake_get(url, *a, **k):
-        response = fake_response(UPLOAD + 10)
-        if url == "http://v/720.mp4":
-            response.raise_for_status.side_effect = requests.HTTPError("403")
+        if isinstance(error, requests.Timeout):
+            raise error
+        response = fake_response(DOWNLOAD + 10)  # upload path: the download itself fails
+        response.iter_content.side_effect = error
         return response
 
     monkeypatch.setattr(requests, "get", fake_get)
-    patch_ffmpeg(monkeypatch)
     update, context = make_update(), stats_context()
-    await bot._reply_videos(update, context, [Video("http://v/1080.mp4", 262, fallbacks=["http://v/720.mp4"])])
-    assert texts(update) == ["Error occurred when trying to send video. Direct link:\nhttp://v/1080.mp4"]
+    await bot._reply_videos(update, context, [Video("http://v/1080.mp4")])
+    assert texts(update)[-1] == "Error occurred when trying to send video. Direct link:\nhttp://v/1080.mp4"
+
+
+async def test_video_downloads_run_in_media_threads(bot, monkeypatch):
+    threads = []
+
+    def fake_get(url, *a, **k):
+        threads.append(threading.current_thread().name)
+        response = fake_response(DOWNLOAD + 10)
+        response.iter_content.side_effect = lambda **k: threads.append(threading.current_thread().name) or [b"x"]
+        return response
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    update, context = make_update(), stats_context()
+    await bot._reply_videos(update, context, [Video("http://v/medium.mp4")])
+    # Both the size probe and the 20-50 MB download stay off the event loop
+    assert len(threads) == 2 and all(name.startswith("media") for name in threads)
+    update.effective_message.reply_video.assert_awaited_once()
 
 
 async def test_reply_video_compressed_upload_rejected_sends_link(bot, monkeypatch):

@@ -24,7 +24,7 @@ def fake_stream(
     return stream
 
 
-def patch_ytube(monkeypatch, *, progressive=(), adaptive=(), audio=None, length=215) -> list[dict]:
+def patch_ytube(monkeypatch, *, progressive=(), adaptive=(), audio=None, dubbed=None, length=215) -> list[dict]:
     """Fake pytubefix.YouTube; returns the kwargs of every streams.filter() call."""
     queries = []
 
@@ -40,7 +40,9 @@ def patch_ytube(monkeypatch, *, progressive=(), adaptive=(), audio=None, length=
             return query
 
         yt.streams.filter.side_effect = filter_
-        yt.streams.get_audio_only.return_value = audio
+        # The original-language track; get_audio_only() alone may pick a dubbed one
+        yt.streams.get_default_audio_track.return_value.get_audio_only.return_value = audio
+        yt.streams.get_audio_only.return_value = dubbed or audio
         return yt
 
     monkeypatch.setattr("yt.youtube.YTube", factory)
@@ -113,6 +115,14 @@ def test_joins_best_h264_video_and_audio_that_fit(monkeypatch):
     video = media.videos[0]
     assert (video.source.read(), video.duration, video.width, video.height) == (b"muxed", 215, 1280, 720)
     assert media.caption == "Video title"
+
+
+def test_picks_original_audio_track(monkeypatch):
+    calls = patch_ffmpeg(monkeypatch)
+    original, dubbed = fake_stream(100, chunks=(b"original",)), fake_stream(100, chunks=(b"dubbed",))
+    patch_ytube(monkeypatch, adaptive=[fake_stream(100, chunks=(b"720",))], audio=original, dubbed=dubbed)
+    YouTube(logger, limit=500).get_media("https://youtu.be/abc")
+    assert calls == [("mux", b"720", b"original")]
 
 
 @pytest.mark.parametrize(
