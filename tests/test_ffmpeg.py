@@ -140,6 +140,29 @@ def test_transcode_video_without_audio(tmp_path):
         assert probe(f) == (["video"], (640, 360))
 
 
+@requires_ffmpeg
+@pytest.mark.parametrize("source, expected", [("1280x535", (1278, 534)), ("405x720", (404, 718))])
+def test_transcode_odd_sizes_and_pixel_formats(tmp_path, source, expected):
+    # An odd side (2.39:1 crops, odd portrait widths) must be rounded to even for 4:2:0, and a non-4:2:0 source
+    # (here 4:4:4, like 10-bit or RGB ones) must come out as plain yuv420p, the only H.264 every client plays.
+    clip = tmp_path / "clip.mp4"
+    subprocess.run(
+        ["ffmpeg", "-nostdin", "-v", "error", "-y", "-f", "lavfi", "-i", f"testsrc=size={source}:rate=25:duration=1"]
+        + ["-c:v", "libx264", "-pix_fmt", "yuv444p", str(clip)],
+        check=True,
+        capture_output=True,
+    )
+    with ffmpeg.transcode([str(clip)], 1, 1_000_000) as f:
+        width, height, pix_fmt = subprocess.run(
+            ["ffprobe", "-v", "error", "-show_entries", "stream=width,height,pix_fmt", "-of", "csv=p=0", "-"],
+            stdin=f,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.split(",")
+    assert ((int(width), int(height)), pix_fmt.strip()) == (expected, "yuv420p")
+
+
 def test_transcode_below_floor_does_not_run(monkeypatch):
     def fail(*args, **kwargs):
         raise AssertionError("ffmpeg must not run")
@@ -166,7 +189,7 @@ def test_transcode_command_line(monkeypatch, duration, height):
     assert args[:2] == ["-i", "http://v/1.mp4"]
     assert ["-map", "0:v:0", "-map", "0:a:0?"] == args[2:6]
     assert args[args.index("-vf") + 1] == (
-        f"scale='if(gte(iw,ih),-2,min(iw,{height}))':'if(gte(iw,ih),min(ih,{height}),-2)'"
+        f"scale='if(gte(iw,ih),-2,trunc(min(iw,{height})/2)*2)':'if(gte(iw,ih),trunc(min(ih,{height})/2)*2,-2)'"
     )
     assert args[args.index("-b:v") + 1] == bitrate
     assert args[args.index("-maxrate") + 1] == bitrate

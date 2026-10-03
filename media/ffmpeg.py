@@ -86,12 +86,16 @@ def transcode(inputs: list[str], duration: int, limit: int) -> IO[bytes] | None:
 
     if (bitrate := video_bitrate(duration, limit)) is None:
         return None
-    # Cap the shorter side, so portrait videos keep their resolution too; never upscale.
+    # Cap the shorter side, so portrait videos keep their resolution too; never upscale. Both sides end up even,
+    # as 4:2:0 requires.
     side = 720 if bitrate >= HD_VIDEO_BITRATE else 480
-    scale = f"scale='if(gte(iw,ih),-2,min(iw,{side}))':'if(gte(iw,ih),min(ih,{side}),-2)'"
+    width = f"trunc(min(iw,{side})/2)*2"
+    height = f"trunc(min(ih,{side})/2)*2"
+    scale = f"scale='if(gte(iw,ih),-2,{width})':'if(gte(iw,ih),{height},-2)'"
     args = [arg for source in inputs for arg in ("-i", source)]
     args += ["-map", "0:v:0", "-map", f"{len(inputs) - 1}:a:0?", "-vf", scale]
-    args += ["-c:v", "libx264", "-preset", "veryfast"]
+    # 8-bit 4:2:0 is the only H.264 flavour every Telegram client plays; 10-bit or 4:4:4 sources would carry over.
+    args += ["-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p"]
     args += ["-b:v", str(bitrate), "-maxrate", str(bitrate), "-bufsize", str(2 * bitrate)]
     args += ["-c:a", "aac", "-b:a", str(AUDIO_BITRATE)]
     try:

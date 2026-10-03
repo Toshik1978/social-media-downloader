@@ -120,8 +120,9 @@ push builds and publishes the Docker image.
 ## Limitations
 
 - The YouTube Music adapter downloads single tracks only — playlist and album links are not supported.
-- Videos that don't fit 50 MB and are longer than about 10 minutes are sent as a direct link: a re-encode
-  would look too poor. Re-encodes run one at a time and take a while (about 25 s for a 4.5-minute 1080p video
+- A video with no version under 50 MB that is longer than about 10 minutes is sent as a direct link (a
+  re-encode would look too poor). Twitter usually has a small enough version; YouTube picks the best stream
+  that fits, down to 144p, and otherwise replies "No media found". Re-encodes run one at a time and take a while (about 25 s for a 4.5-minute 1080p video
   on 12 cores).
 - Tweets mixing photos and videos are sent as photos first, then videos. A carousel video too large
   for Telegram to fetch by URL (over 20 MB) makes its album fall back to the same photos-then-videos order.

@@ -70,7 +70,7 @@ The entry point is `main.py` (`main:main`). Adapters + the bot:
 - **`media/ffmpeg.py`** — synchronous ffmpeg/ffprobe helpers, always called from a worker thread: `available()`,
   `video_bitrate(duration, limit)` (video bit/s that fits, `None` below the 500 kbps floor ≈ 10 min for 50 MB),
   `duration(source)`, `mux(video_path, audio_path)` (stream copy) and `transcode(inputs, duration, limit)` (H.264/AAC,
-  shorter side ≤ 720 or 480, never upscaled; `None` on failure or if still too big). One re-encode at a time (lock);
+  shorter side ≤ 720 or 480, even sizes, 8-bit yuv420p, never upscaled; `None` on failure or if still too big). One re-encode at a time (lock);
   every call has a timeout. Call it through the module (`from media import ffmpeg`; `ffmpeg.transcode(...)`).
 - **`bot/telegram_bot.py`** — generic `TelegramBot` base class. Handlers are discovered by naming
   convention: methods ending in `_command_handler` become `/command` handlers, methods ending in
@@ -134,4 +134,5 @@ The entry point is `main.py` (`main:main`). Adapters + the bot:
   `album` because they can exceed the 20 MB URL-fetch limit). A rejected carousel group loses its order
   the same way.
 - Twitter/Instagram downloads depend on third-party APIs that may rate-limit or change.
-- Videos over 50 MB and longer than ~10 minutes get a direct link (the re-encode floor is 500 kbps of video).
+- A URL video with no version ≤ 50 MB that is longer than ~10 minutes gets a direct link (the re-encode floor is
+  500 kbps of video); a YouTube video picks the best stream that fits (down to 144p), else "No media found".
