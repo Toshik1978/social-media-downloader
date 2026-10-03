@@ -35,8 +35,8 @@ class Twitter(SocialMedia):
             return Medias()
 
         tweet = self.__scrape_tweet(tweet_id)
-        tweet_media = tweet["media_extended"]
-        photos = [media for media in tweet_media if media["type"] == "image"]
+        tweet_media = (tweet.get("media") or {}).get("all") or []
+        photos = [media for media in tweet_media if media["type"] == "photo"]
         gifs = [media for media in tweet_media if media["type"] == "gif"]
         videos = [media for media in tweet_media if media["type"] == "video"]
         # Videos stay standalone: they can exceed the 20 MB Telegram fetches by URL, which fails a media group.
@@ -65,16 +65,19 @@ class Twitter(SocialMedia):
     def __scrape_tweet(self, tweet_id: str) -> dict:
         self.__logger.info(f"Scraping tweet ID {tweet_id}")
 
-        r = requests.get(f"https://api.vxtwitter.com/Twitter/status/{tweet_id}", timeout=30)
-        r.raise_for_status()
+        # Errors come back as JSON too (e.g. HTTP 404 {"code": 404, "message": "NOT_FOUND"}), so no raise_for_status.
+        r = requests.get(f"https://api.fxtwitter.com/status/{tweet_id}", timeout=30)
         try:
-            return r.json()
+            j = r.json()
         except requests.exceptions.JSONDecodeError as exc:
             # The api likely returned an HTML page; try looking for an error message:
-            # <meta content="{message}" property="og:description" />
-            if match := re.search(r'<meta content="(.*?)" property="og:description" />', r.text):
+            # <meta property="og:description" content="{message}"/>
+            if match := re.search(r'<meta property="og:description" content="(.*?)"', r.text):
                 raise Exception(f"API returned error: {html.unescape(match.group(1))}") from exc
             raise
+        if j.get("code") != 200 or not j.get("tweet"):
+            raise Exception(f"API returned error: {j.get('message')}")
+        return j["tweet"]
 
     def __get_caption(self, tweet: dict) -> str | None:
         # Tweets with media usually end with t.co links pointing back at the media itself.
@@ -110,13 +113,15 @@ class Twitter(SocialMedia):
     def __get_videos(self, videos: list[dict]) -> list[Video]:
         group = []
         for video in videos:
-            video_url = video["url"]
-            self.__logger.info(f"Video url: {video_url}")
-            group.append(Video(video_url, **self.__get_metadata(video)))
+            # Every MP4 rendition, best first, so the bot can fall back to a smaller one; HLS playlists are skipped.
+            formats = [f for f in video.get("formats") or [] if f.get("container") == "mp4"]
+            urls = [f["url"] for f in sorted(formats, key=lambda f: f.get("bitrate") or 0, reverse=True)]
+            urls = urls or [video["url"]]
+            self.__logger.info(f"Video urls: {urls}")
+            group.append(Video(urls[0], **self.__get_metadata(video), fallbacks=urls[1:]))
         return group
 
     def __get_metadata(self, media: dict) -> dict:
-        # The API reports 0 ms for media without a duration; missing values are left to Telegram.
-        size = media.get("size") or {}
-        duration = round((media.get("duration_millis") or 0) / 1000) or None
-        return {"duration": duration, "width": size.get("width"), "height": size.get("height")}
+        # The API reports 0 s for media without a duration; missing values are left to Telegram.
+        duration = round(media.get("duration") or 0) or None
+        return {"duration": duration, "width": media.get("width"), "height": media.get("height")}
