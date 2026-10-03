@@ -94,7 +94,9 @@ The entry point is `main.py` (`main:main`). Adapters + the bot:
   adaptive stream + the original-language M4A audio track that fit, joined with `ffmpeg.mux`; else a re-encode
   from the best stream ≤ 720p; progressive streams only when ffmpeg is missing) and `YouTubeMusic`
   (`music.youtube.com`, audio only via `streams.get_audio_only()` — M4A/AAC, which Telegram plays as a music
-  track). `YouTube` excludes `music.youtube.com` so a music link isn't answered twice. `Instagram` handles `GraphVideo`,
+  track). Both retry once with the `MWEB` pytubefix client when YouTube answers HTTP 403 mid-download
+  (`yt/retry.py`, a fresh `YTube` per attempt); other errors aren't retried. `YouTube` excludes
+  `music.youtube.com` so a music link isn't answered twice. `Instagram` handles `GraphVideo`,
   `GraphImage` and `GraphSidecar` (carousel children are typed `XDTGraph*`, so it branches on
   `is_video`, and keeps them in order in `album`); the API reports errors as HTTP 200 with
   `"status": false`.

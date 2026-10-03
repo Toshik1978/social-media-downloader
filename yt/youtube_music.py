@@ -7,6 +7,7 @@ from pytubefix import Stream
 from pytubefix import YouTube as YTube
 
 from media.media import Audio, Medias, SocialMedia
+from yt.retry import with_client_retry
 
 
 class YouTubeMusic(SocialMedia):
@@ -27,8 +28,11 @@ class YouTubeMusic(SocialMedia):
     def get_media(self, url: str) -> Medias:
         """Get all available medias."""
 
+        return with_client_retry(self.__logger, lambda kwargs: self.__get_media(url, kwargs))
+
+    def __get_media(self, url: str, ytube_kwargs: dict[str, str]) -> Medias:
         # The highest bitrate mp4 (AAC/M4A) audio stream, which Telegram plays as a music track.
-        yt = YTube(url)
+        yt = YTube(url, **ytube_kwargs)
         stream = yt.streams.get_audio_only()
         if stream is None:
             self.__logger.info(f"Didn't find an audio stream: {url}")

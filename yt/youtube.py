@@ -9,6 +9,7 @@ from pytubefix import YouTube as YTube
 
 from media import ffmpeg
 from media.media import Medias, SocialMedia, Video
+from yt.retry import with_client_retry
 
 
 class YouTube(SocialMedia):
@@ -34,7 +35,10 @@ class YouTube(SocialMedia):
     def get_media(self, url: str) -> Medias:
         """Get all available medias."""
 
-        yt = YTube(url)
+        return with_client_retry(self.__logger, lambda kwargs: self.__get_media(url, kwargs))
+
+    def __get_media(self, url: str, ytube_kwargs: dict[str, str]) -> Medias:
+        yt = YTube(url, **ytube_kwargs)
         # Most videos only come as separate video and audio streams, which take ffmpeg to join.
         video = self.__get_adaptive(yt) if ffmpeg.available() else self.__get_progressive(yt)
         if video is None:

@@ -1,5 +1,8 @@
 import logging
 from unittest.mock import MagicMock
+from urllib.error import HTTPError
+
+import pytest
 
 from yt.youtube_music import YouTubeMusic
 
@@ -63,3 +66,27 @@ def test_audio_over_limit_returns_empty(monkeypatch):
     media = YouTubeMusic(logger, limit=500).get_media(URL)
     assert media.audios == []
     stream.iter_chunks.assert_not_called()
+
+
+@pytest.mark.parametrize("codes, attempts_made", [((403, None), 2), ((403, 403), 2), ((404, None), 1)])
+def test_403_retries_with_another_client(monkeypatch, codes, attempts_made):
+    attempts = []
+
+    def factory(url, **kwargs):
+        attempts.append(kwargs)
+        stream = fake_stream(100)
+        if code := codes[len(attempts) - 1]:
+            stream.iter_chunks.side_effect = HTTPError("https://googlevideo/x", code, "Forbidden", None, None)
+        yt = MagicMock()
+        yt.title, yt.author, yt.length = "Song", "Artist - Topic", 215
+        yt.streams.get_audio_only.return_value = stream
+        return yt
+
+    monkeypatch.setattr("yt.youtube_music.YTube", factory)
+    if codes == (403, None):
+        media = YouTubeMusic(logger, limit=500).get_media(URL)
+        assert media.audios[0].file.read() == b"x" * 16 + b"y" * 16
+    else:
+        with pytest.raises(HTTPError):
+            YouTubeMusic(logger, limit=500).get_media(URL)
+    assert attempts == [{}, {"client": "MWEB"}][:attempts_made]
