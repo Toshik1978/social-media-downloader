@@ -85,6 +85,10 @@ class Medias:
     """Post text (tweet text, Instagram caption, video title)."""
 
 
+class ServiceUnavailable(Exception):
+    """The source's service kept failing (server errors, dropped connections), so trying again later may work."""
+
+
 class SocialMedia:
     """Base class for social media adapters."""
 

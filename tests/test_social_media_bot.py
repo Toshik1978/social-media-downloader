@@ -10,7 +10,7 @@ from requests.structures import CaseInsensitiveDict
 from telegram import constants
 
 from bot.telegram_bot import MEDIA_WRITE_TIMEOUT
-from media.media import Audio, Gif, Medias, Photo, SocialMedia, Video
+from media.media import Audio, Gif, Medias, Photo, ServiceUnavailable, SocialMedia, Video
 from tests.conftest import make_context, make_update
 
 
@@ -84,6 +84,24 @@ async def test_download_adapter_exception_is_logged(bot):
     await bot.download_message_handler(update, context)
     # Falls through to "No media found" after swallowing+logging the error
     update.effective_message.reply_text.assert_awaited_with("No media found", do_quote=True)
+
+
+async def test_download_unavailable_service_is_reported(bot):
+    bot._SocialMediaBot__sm = [FakeAdapter(error=ServiceUnavailable("HTTP 500"))]
+    update, context = make_update(text="https://example.com"), make_context()
+    await bot.download_message_handler(update, context)
+    assert texts(update) == ["FakeAdapter is unavailable right now, try again later"]
+
+
+async def test_download_unavailable_service_is_not_reported_when_media_was_sent(bot):
+    bot._SocialMediaBot__sm = [
+        FakeAdapter(error=ServiceUnavailable("HTTP 500")),
+        FakeAdapter(Medias(gifs=[Gif("http://g/1.gif")])),
+    ]
+    update, context = make_update(text="https://example.com"), make_context()
+    await bot.download_message_handler(update, context)
+    update.effective_message.reply_animation.assert_awaited_once()
+    assert texts(update) == []
 
 
 async def test_adapters_run_in_a_worker_thread(bot):

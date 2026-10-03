@@ -5,7 +5,7 @@ import pytest
 import requests
 
 from instagram.instagram import Instagram
-from media.media import Photo, Video
+from media.media import Photo, ServiceUnavailable, Video
 
 logger = logging.getLogger("test")
 
@@ -24,6 +24,31 @@ def _resp(payload):
 
 def _patch(monkeypatch, payload):
     monkeypatch.setattr(requests, "get", lambda *a, **k: _resp(payload))
+
+
+def _error(status):
+    r = MagicMock()
+    r.raise_for_status.side_effect = requests.HTTPError(f"{status} Error", response=MagicMock(status_code=status))
+    return r
+
+
+def _patch_sequence(monkeypatch, outcomes):
+    """requests.get answers with each outcome in turn (a response, or an exception to raise); returns the sleeps."""
+    calls = iter(outcomes)
+
+    def get(*a, **k):
+        outcome = next(calls)
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    sleeps = []
+    monkeypatch.setattr(requests, "get", get)
+    monkeypatch.setattr("instagram.instagram.sleep", sleeps.append)
+    return sleeps
+
+
+VIDEO_POST = {"status": True, "__typename": "GraphVideo", "video_url": "https://cdn/v.mp4"}
 
 
 def test_graph_video_returns_video_with_metadata(instagram, monkeypatch):
@@ -117,3 +142,24 @@ def test_unsupported_type_returns_empty(instagram, monkeypatch):
     _patch(monkeypatch, {"status": True, "__typename": "GraphSomethingNew"})
     media = instagram.get_media("https://instagram.com/p/abc/")
     assert media.album == [] and media.videos == []
+
+
+def test_server_error_is_retried(instagram, monkeypatch):
+    sleeps = _patch_sequence(monkeypatch, [_error(500), requests.ConnectionError("reset"), _resp(VIDEO_POST)])
+    media = instagram.get_media("https://instagram.com/reel/abc/")
+    assert media.videos == [Video("https://cdn/v.mp4")]
+    assert sleeps == [1, 3]
+
+
+def test_persistent_server_error_raises_service_unavailable(instagram, monkeypatch):
+    sleeps = _patch_sequence(monkeypatch, [_error(500), _error(502), _error(500)])
+    with pytest.raises(ServiceUnavailable):
+        instagram.get_media("https://instagram.com/reel/abc/")
+    assert sleeps == [1, 3]
+
+
+def test_client_error_is_not_retried(instagram, monkeypatch):
+    sleeps = _patch_sequence(monkeypatch, [_error(429)])
+    with pytest.raises(requests.HTTPError):
+        instagram.get_media("https://instagram.com/reel/abc/")
+    assert sleeps == []

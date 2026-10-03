@@ -1,9 +1,13 @@
 from logging import Logger
+from time import sleep
 from urllib.parse import urlparse
 
 import requests
 
-from media.media import Medias, Photo, SocialMedia, Video
+from media.media import Medias, Photo, ServiceUnavailable, SocialMedia, Video
+
+RETRY_DELAYS = (1, 3)
+"""Seconds to wait before each retry of an API request that failed with a server error or a dropped connection."""
 
 
 class Instagram(SocialMedia):
@@ -25,15 +29,8 @@ class Instagram(SocialMedia):
     def get_media(self, url: str) -> Medias:
         """Get all available medias."""
 
-        api_url = "https://instagram-looter2.p.rapidapi.com/post"
-        querystring = {"url": url}
-        headers = {"x-rapidapi-key": self.__api_key, "x-rapidapi-host": "instagram-looter2.p.rapidapi.com"}
-
-        r = requests.get(api_url, headers=headers, params=querystring, timeout=30)
-        r.raise_for_status()
-
         # The API reports errors with HTTP 200 and "status": false.
-        j = r.json()
+        j = self.__get_post(url)
         if not j.get("status", True):
             raise Exception(f"API returned error: {j.get('errorMessage')}")
 
@@ -52,6 +49,25 @@ class Instagram(SocialMedia):
 
         self.__logger.info(f"Unsupported post type: {typename}")
         return Medias()
+
+    def __get_post(self, url: str) -> dict:
+        api_url = "https://instagram-looter2.p.rapidapi.com/post"
+        querystring = {"url": url}
+        headers = {"x-rapidapi-key": self.__api_key, "x-rapidapi-host": "instagram-looter2.p.rapidapi.com"}
+
+        # The API has outages answering HTTP 500 with an empty body; retry those, but not client errors (e.g. quota).
+        for delay in (*RETRY_DELAYS, None):
+            try:
+                r = requests.get(api_url, headers=headers, params=querystring, timeout=30)
+                r.raise_for_status()
+                return r.json()
+            except (requests.HTTPError, requests.ConnectionError) as e:
+                if isinstance(e, requests.HTTPError) and e.response.status_code < 500:
+                    raise
+                if delay is None:
+                    raise ServiceUnavailable(f"{e.__class__.__qualname__}: {e}") from e
+                self.__logger.warning(f"Instagram API failed ({e.__class__.__qualname__}: {e}), retrying in {delay} s")
+                sleep(delay)
 
     def __get_caption(self, post: dict) -> str | None:
         edges = (post.get("edge_media_to_caption") or {}).get("edges") or []

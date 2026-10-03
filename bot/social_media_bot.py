@@ -13,7 +13,7 @@ from telegram.ext import CallbackContext
 
 from bot.telegram_bot import TelegramBot, command_description
 from media import ffmpeg
-from media.media import Audio, Gif, Medias, Photo, SocialMedia, Video
+from media.media import Audio, Gif, Medias, Photo, ServiceUnavailable, SocialMedia, Video
 
 DOWNLOAD_CHUNK_SIZE = 256 * 1024
 """Read buffer for streaming a video to a temp file: big enough to keep per-chunk overhead low, small
@@ -121,6 +121,7 @@ class SocialMediaBot(TelegramBot):
         url = update.effective_message.text
         # Find the relevant social media adapter
         is_found = False
+        unavailable = []
         for social in self.__sm:
             if social.is_valid_url(url):
                 try:
@@ -131,6 +132,8 @@ class SocialMediaBot(TelegramBot):
                         "warning",
                         f"{social.__class__.__name__} failed to get media: {e.__class__.__qualname__}: {e}",
                     )
+                    if isinstance(e, ServiceUnavailable):
+                        unavailable.append(social.__class__.__name__)
                     continue
 
                 # The caption describes the whole post, so only the first sent message carries it.
@@ -148,7 +151,11 @@ class SocialMediaBot(TelegramBot):
                     await self._reply_audios(update, context, media.audios, caption)
                     is_found = True
 
-        if not is_found:
+        if not is_found and unavailable:
+            await update.effective_message.reply_text(
+                f"{', '.join(unavailable)} is unavailable right now, try again later", do_quote=True
+            )
+        elif not is_found:
             await update.effective_message.reply_text("No media found", do_quote=True)
 
     async def __get_media(self, update: Update, social: SocialMedia, url: str) -> Medias:

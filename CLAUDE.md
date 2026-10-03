@@ -99,7 +99,8 @@ The entry point is `main.py` (`main:main`). Adapters + the bot:
   `music.youtube.com` so a music link isn't answered twice. `Instagram` handles `GraphVideo`,
   `GraphImage` and `GraphSidecar` (carousel children are typed `XDTGraph*`, so it branches on
   `is_video`, and keeps them in order in `album`); the API reports errors as HTTP 200 with
-  `"status": false`.
+  `"status": false`, and has outages answering HTTP 500 — server errors and dropped connections are retried
+  twice (after 1 s, then 3 s), then raise `ServiceUnavailable`; client errors (e.g. 429 quota) aren't retried.
 
 ### Adding a new source
 
@@ -118,7 +119,8 @@ The entry point is `main.py` (`main:main`). Adapters + the bot:
   documenting structure.
 - Network calls use `requests` with an explicit `timeout`; keep timeouts on any new outbound call.
 - Adapter exceptions in `download_message_handler` are caught and logged per-adapter, then the bot
-  moves on; a totally failed message replies "No media found".
+  moves on; a totally failed message replies "No media found", or "<Adapter> is unavailable right now, try again
+  later" when an adapter raised `media.media.ServiceUnavailable` (its service kept failing).
 - Telegram has size limits (`constants.FileSizeLimit`): a URL video is sent as the first of `[source, *fallbacks]`
   that fits (by URL ≤ 20 MB, uploaded ≤ 50 MB; a version that errors or has no `Content-Length` is skipped); if
   none fits, the smallest that responded is re-encoded with `ffmpeg.transcode` when `ffmpeg.video_bitrate` allows,
