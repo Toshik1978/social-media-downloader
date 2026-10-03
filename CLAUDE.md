@@ -70,28 +70,31 @@ The entry point is `main.py` (`main:main`). Adapters + the bot:
 - **`media/ffmpeg.py`** — synchronous ffmpeg/ffprobe helpers, always called from a worker thread: `available()`,
   `video_bitrate(duration, limit)` (video bit/s that fits, `None` below the 500 kbps floor ≈ 10 min for 50 MB),
   `duration(source)`, `mux(video_path, audio_path)` (stream copy) and `transcode(inputs, duration, limit)` (H.264/AAC,
-  shorter side ≤ 720 or 480, even sizes, 8-bit yuv420p, never upscaled; `None` on failure or if still too big). One re-encode at a time (lock);
-  every call has a timeout. Call it through the module (`from media import ffmpeg`; `ffmpeg.transcode(...)`).
+  shorter side ≤ 720 or 480, even sizes, 8-bit yuv420p, ≤ 30 fps, never upscaled; `None` on failure or if still
+  too big). One re-encode at a time (lock); every call has a timeout (re-encodes: `max(600, 3 × duration)` s).
+  Call it through the module (`from media import ffmpeg`; `ffmpeg.transcode(...)`).
 - **`bot/telegram_bot.py`** — generic `TelegramBot` base class. Handlers are discovered by naming
   convention: methods ending in `_command_handler` become `/command` handlers, methods ending in
   `_message_handler` become text-message handlers. Command descriptions come from the
   `@command_description(...)` decorator. A whitelist `MessageHandler` denies any chat not in
   `USER_ID`.
 - **`bot/social_media_bot.py`** — concrete bot: `/start`, `/help`, `/stats`, `/resetstats`, and the
-  `download_message_handler` that runs **every** matching adapter (not just the first) in a worker thread
-  (`asyncio.to_thread`; the Application uses `concurrent_updates(True)`, so a long download doesn't block other
-  messages) and replies with
+  `download_message_handler` that runs **every** matching adapter (not just the first) and replies with
   the media, so adapters' `is_valid_url` must not overlap. The caption goes on the first message sent
   for a link only (album caption = first photo's caption), as plain text truncated to
   `constants.MessageLimit.CAPTION_LENGTH` UTF-16 code units; `captions=False` drops it. Stats live
   in `context.bot_data['stats'][user_id]`.
+- **Blocking work** (adapters' `get_media`, video size probes and downloads, ffmpeg) runs in the bot's own
+  32-thread pool via `_run_blocking` in `bot/social_media_bot.py`, never on the event loop; the Application uses
+  `concurrent_updates(True)`, so a long download doesn't block other messages. An adapter still running after
+  `SLOW_DOWNLOAD_NOTICE` (5 s) gets a "Downloading…" status message, deleted when it returns.
 - **`twitter/`, `instagram/`, `yt/`** — one adapter per source, each implementing `SocialMedia`.
   Twitter uses `api.fxtwitter.com` (errors arrive as JSON `code`/`message` or an HTML `og:description`) and
   puts every MP4 rendition, best first, in `source` + `fallbacks`. `yt/` holds two: `YouTube` (video: the best H.264
-  adaptive stream + M4A audio that fit, joined with `ffmpeg.mux`; else a re-encode from the best stream ≤ 720p;
-  progressive streams only when ffmpeg is missing) and `YouTubeMusic` (`music.youtube.com`, audio only via
-  `streams.get_audio_only()` — M4A/AAC, which Telegram plays as a music track). `YouTube` excludes
-  `music.youtube.com` so a music link isn't answered twice. `Instagram` handles `GraphVideo`,
+  adaptive stream + the original-language M4A audio track that fit, joined with `ffmpeg.mux`; else a re-encode
+  from the best stream ≤ 720p; progressive streams only when ffmpeg is missing) and `YouTubeMusic`
+  (`music.youtube.com`, audio only via `streams.get_audio_only()` — M4A/AAC, which Telegram plays as a music
+  track). `YouTube` excludes `music.youtube.com` so a music link isn't answered twice. `Instagram` handles `GraphVideo`,
   `GraphImage` and `GraphSidecar` (carousel children are typed `XDTGraph*`, so it branches on
   `is_video`, and keeps them in order in `album`); the API reports errors as HTTP 200 with
   `"status": false`.
@@ -115,8 +118,9 @@ The entry point is `main.py` (`main:main`). Adapters + the bot:
 - Adapter exceptions in `download_message_handler` are caught and logged per-adapter, then the bot
   moves on; a totally failed message replies "No media found".
 - Telegram has size limits (`constants.FileSizeLimit`): a URL video is sent as the first of `[source, *fallbacks]`
-  that fits (by URL ≤ 20 MB, uploaded ≤ 50 MB); if none fits, the smallest is re-encoded with `ffmpeg.transcode` when
-  `ffmpeg.video_bitrate` allows, else the bot sends a direct link to the best one. Audio is always uploaded from a temp
+  that fits (by URL ≤ 20 MB, uploaded ≤ 50 MB; a version that errors or has no `Content-Length` is skipped); if
+  none fits, the smallest that responded is re-encoded with `ffmpeg.transcode` when `ffmpeg.video_bitrate` allows,
+  else the bot sends a direct link to the best one. Audio is always uploaded from a temp
   file; `YouTubeMusic` returns nothing if the stream exceeds the upload limit. `album` items go out as
   media groups of at most 10 (`constants.MediaGroupLimit.MAX_MEDIA_LENGTH`); if Telegram rejects a group
   that has videos (`BadRequest`, e.g. a video over 20 MB), that batch is resent per kind (photos group,
