@@ -1,9 +1,11 @@
 import io
 import logging
 from unittest.mock import MagicMock
+from urllib.error import HTTPError
 
 import pytest
 
+import yt.youtube
 from yt.youtube import YouTube
 
 logger = logging.getLogger("test")
@@ -182,3 +184,57 @@ def test_no_usable_streams_returns_empty(monkeypatch, adaptive, audio):
     patch_ytube(monkeypatch, adaptive=adaptive, audio=audio)
     assert YouTube(logger, limit=500).get_media("https://youtu.be/abc").videos == []
     assert calls == []
+
+
+# --- 403 retry -------------------------------------------------------------------
+
+
+def http_error(code: int) -> HTTPError:
+    return HTTPError("https://rr1---sn.googlevideo.com/videoplayback", code, "Forbidden", None, None)
+
+
+def patch_failing_attempts(monkeypatch, errors: list[HTTPError | None]) -> list[dict]:
+    """Wrap the fake YTube: attempt N's audio download raises errors[N] (None = works); returns attempts' kwargs."""
+    make = yt.youtube.YTube
+    attempts = []
+
+    def factory(url, **kwargs):
+        attempts.append(kwargs)
+        instance = make(url)
+        if error := errors[len(attempts) - 1]:
+            failing = fake_stream(100)
+            failing.iter_chunks.side_effect = error
+            instance.streams.get_default_audio_track.return_value.get_audio_only.return_value = failing
+        return instance
+
+    monkeypatch.setattr("yt.youtube.YTube", factory)
+    return attempts
+
+
+def test_403_retries_with_another_client(monkeypatch):
+    calls = patch_ffmpeg(monkeypatch)
+    patch_ytube(monkeypatch, adaptive=[fake_stream(100, chunks=(b"720",))], audio=fake_stream(100, chunks=(b"audio",)))
+    attempts = patch_failing_attempts(monkeypatch, [http_error(403), None])
+    media = YouTube(logger, limit=500).get_media("https://youtu.be/abc")
+    # A fresh YTube object (fresh stream URLs) from the mobile web client
+    assert attempts == [{}, {"client": "MWEB"}]
+    assert calls == [("mux", b"720", b"audio")]
+    assert media.videos[0].source.read() == b"muxed"
+
+
+def test_403_on_every_client_raises(monkeypatch):
+    patch_ffmpeg(monkeypatch)
+    patch_ytube(monkeypatch, adaptive=[fake_stream(100)], audio=fake_stream(100))
+    attempts = patch_failing_attempts(monkeypatch, [http_error(403), http_error(403)])
+    with pytest.raises(HTTPError):
+        YouTube(logger, limit=500).get_media("https://youtu.be/abc")
+    assert len(attempts) == 2
+
+
+def test_other_http_errors_are_not_retried(monkeypatch):
+    patch_ffmpeg(monkeypatch)
+    patch_ytube(monkeypatch, adaptive=[fake_stream(100)], audio=fake_stream(100))
+    attempts = patch_failing_attempts(monkeypatch, [http_error(404), None])
+    with pytest.raises(HTTPError):
+        YouTube(logger, limit=500).get_media("https://youtu.be/abc")
+    assert attempts == [{}]

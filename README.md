@@ -92,10 +92,10 @@ the videos of an Instagram carousel, keeping the carousel's order) are sent as a
 sent for that link (truncated to Telegram's 1024-character limit). Videos go
 out in the best version that fits Telegram's limits: by direct URL up to 20 MB, uploaded from a
 temporary file up to 50 MB (Twitter offers several versions of each video). When no version fits, the bot
-re-encodes the video with ffmpeg (H.264/AAC, at most 720p and 30 fps) if 50 MB still leaves at least 500 kbps for the picture
-— roughly videos up to 10 minutes — and otherwise replies with a direct link. YouTube serves video and audio as
-separate streams; the bot joins them with ffmpeg, using the original-language audio track. Anything that takes more
-than a few seconds gets a "Downloading…" status message. Audio is uploaded as a Telegram music track.
+re-encodes the video with ffmpeg (H.264/AAC, at most 720p and 30 fps) if 50 MB still leaves at least 500 kbps for
+the picture — roughly videos up to 10 minutes — and otherwise replies with a direct link. YouTube serves video and audio as
+separate streams; the bot joins them with ffmpeg, using the original-language audio track. Anything that takes
+more than a few seconds gets a "Downloading…" status message. Audio is uploaded as a Telegram music track.
 
 Per-user stats are persisted to `.data/persistence` via `python-telegram-bot`'s `PicklePersistence`.
 
@@ -127,7 +127,8 @@ push builds and publishes the Docker image.
   while (about 25 s for a 4.5-minute 1080p video on 12 cores; a small host may take longer than the video lasts).
 - Tweets mixing photos and videos are sent as photos first, then videos. A carousel video too large
   for Telegram to fetch by URL (over 20 MB) makes its album fall back to the same photos-then-videos order.
-- Twitter/Instagram downloads depend on third-party APIs that may rate-limit or change.
+- Twitter/Instagram downloads depend on third-party APIs that may rate-limit or change. YouTube occasionally refuses
+  a download (HTTP 403); the bot retries once with another pytubefix client before giving up.
 
 ## Special thanks
 
