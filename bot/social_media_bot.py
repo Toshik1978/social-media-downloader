@@ -8,7 +8,7 @@ from typing import IO
 
 import requests
 import telegram.error
-from telegram import InputMediaPhoto, InputMediaVideo, Update, constants
+from telegram import InputMediaPhoto, InputMediaVideo, Message, Update, constants
 from telegram.ext import CallbackContext
 
 from bot.telegram_bot import TelegramBot, command_description
@@ -163,7 +163,7 @@ class SocialMediaBot(TelegramBot):
         try:
             return await task
         finally:
-            await message.delete()
+            await self.__delete_notice(update, message)
 
     def __get_caption(self, media: Medias) -> str | None:
         if not self.__captions or not media.caption or not (caption := media.caption.strip()):
@@ -292,22 +292,24 @@ class SocialMediaBot(TelegramBot):
                         "Video is too large for direct download\nUsing upload method (this might take a bit longer)",
                         do_quote=True,
                     )
-                    with request, TemporaryFile() as tf:
-                        self._log(update, "info", f"Downloading video (Content-length: {video_size})")
-                        await _run_blocking(_save_video, request, tf)
-                        self._log(update, "info", "Video downloaded, uploading to Telegram")
-                        tf.seek(0)
-                        await update.effective_message.reply_video(
-                            video=tf,
-                            duration=video.duration,
-                            width=video.width,
-                            height=video.height,
-                            caption=caption,
-                            do_quote=True,
-                            supports_streaming=True,
-                        )
-                        self._log(update, "info", "Sent video (upload)")
-                    await message.delete()
+                    try:
+                        with request, TemporaryFile() as tf:
+                            self._log(update, "info", f"Downloading video (Content-length: {video_size})")
+                            await _run_blocking(_save_video, request, tf)
+                            self._log(update, "info", "Video downloaded, uploading to Telegram")
+                            tf.seek(0)
+                            await update.effective_message.reply_video(
+                                video=tf,
+                                duration=video.duration,
+                                width=video.width,
+                                height=video.height,
+                                caption=caption,
+                                do_quote=True,
+                                supports_streaming=True,
+                            )
+                            self._log(update, "info", "Sent video (upload)")
+                    finally:
+                        await self.__delete_notice(update, message)
                     return
 
                 self._log(update, "info", f"Video size ({video_size}) is bigger than FILESIZE_UPLOAD: {url}")
@@ -367,7 +369,14 @@ class SocialMediaBot(TelegramBot):
             self._log(update, "info", "Sent video (compressed)")
             return True
         finally:
+            await self.__delete_notice(update, message)
+
+    async def __delete_notice(self, update: Update, message: Message) -> None:
+        # A status message that can't be deleted mustn't discard the media it was announcing.
+        try:
             await message.delete()
+        except telegram.error.TelegramError as e:
+            self._log(update, "warning", f"Couldn't delete status message: {e.__class__.__qualname__}: {e}")
 
     async def __reply_video_file(self, update: Update, video: Video, f: IO[bytes], caption: str | None) -> None:
         try:

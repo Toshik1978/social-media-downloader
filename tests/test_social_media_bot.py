@@ -134,6 +134,22 @@ async def test_slow_adapter_failure_still_removes_status_message(bot, monkeypatc
     assert texts(update)[-1] == "No media found"
 
 
+async def test_status_message_delete_failure_keeps_the_media(bot, monkeypatch):
+    monkeypatch.setattr("bot.social_media_bot.SLOW_DOWNLOAD_NOTICE", 0.01)
+
+    class SlowAdapter(FakeAdapter):
+        def get_media(self, url: str) -> Medias:
+            time.sleep(0.2)
+            return super().get_media(url)
+
+    bot._SocialMediaBot__sm = [SlowAdapter(Medias(gifs=[Gif("http://g/1.gif")]))]
+    update, context = make_update(text="x"), make_context()
+    update.effective_message.reply_text.return_value.delete.side_effect = telegram.error.NetworkError("down")
+    await bot.download_message_handler(update, context)
+    update.effective_message.reply_animation.assert_awaited_once()
+    assert "No media found" not in texts(update)
+
+
 async def test_download_photos(bot):
     bot._SocialMediaBot__sm = [FakeAdapter(Medias(album=[Photo("http://p/1.jpg"), Photo("http://p/2.jpg")]))]
     update, context = make_update(text="x"), make_context()
@@ -356,6 +372,17 @@ async def test_reply_video_medium_uploads_file(bot, monkeypatch):
     # Upload path posts a status message, uploads, then deletes the status message
     update.effective_message.reply_video.assert_awaited()
     update.effective_message.reply_text.return_value.delete.assert_awaited_once()
+
+
+async def test_reply_video_upload_failure_still_removes_status_message(bot, monkeypatch):
+    size = constants.FileSizeLimit.FILESIZE_DOWNLOAD + 10
+    monkeypatch.setattr(requests, "get", lambda *a, **k: fake_response(size))
+    update, context = make_update(), make_context()
+    context.bot_data["stats"] = {1: {"messages_handled": 0, "media_downloaded": 0}}
+    update.effective_message.reply_video.side_effect = telegram.error.BadRequest("Request Entity Too Large")
+    await bot._reply_videos(update, context, [Video("http://v/medium.mp4")])
+    update.effective_message.reply_text.return_value.delete.assert_awaited_once()
+    assert texts(update)[-1].startswith("Error occurred when trying to send video")
 
 
 async def test_reply_video_error_sends_direct_link(bot, monkeypatch):
