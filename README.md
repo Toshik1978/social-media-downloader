@@ -11,9 +11,9 @@ Supported sources:
 
 | Source | What it downloads | Backend |
 |--------|-------------------|---------|
-| **Twitter / X** (`twitter.com`, `x.com`, `t.co`) | Photos (upscaled to original quality), GIFs, videos | [vxtwitter](https://github.com/dylanpdx/BetterTwitFix) public API |
+| **Twitter / X** (`twitter.com`, `x.com`, `t.co`) | Photos (upscaled to original quality), GIFs, videos (the best version that fits Telegram's upload limit) | [fxtwitter](https://github.com/FxEmbed/FxEmbed) public API |
 | **Instagram** (`instagram.com`) | Photos and videos from posts, reels and carousels | [instagram-looter2](https://rapidapi.com/) via RapidAPI (key required) |
-| **YouTube** (`youtube.com`, `youtu.be`) | Progressive video, best quality that fits Telegram's upload limit | [pytubefix](https://github.com/JuanBindez/pytubefix) |
+| **YouTube** (`youtube.com`, `youtu.be`) | H.264 video with AAC audio, best quality that fits Telegram's upload limit | [pytubefix](https://github.com/JuanBindez/pytubefix) + ffmpeg |
 | **YouTube Music** (`music.youtube.com`) | Audio only (highest bitrate M4A/AAC), sent as a music track with title, artist and duration | [pytubefix](https://github.com/JuanBindez/pytubefix) |
 
 The bot is **whitelist-only**: it ignores everyone except the user IDs you configure.
@@ -46,7 +46,9 @@ To find your numeric Telegram user ID, message a bot such as [@userinfobot](http
 ### Locally (with [uv](https://docs.astral.sh/uv/))
 
 The bot is exposed as the `social-media-downloader` console script. `uv run` builds/installs the
-project into a managed environment automatically. Requires Python 3.14+.
+project into a managed environment automatically. Requires Python 3.14+ and [ffmpeg](https://ffmpeg.org/)
+(`ffmpeg` and `ffprobe` on `PATH`; the Docker image ships it). Without ffmpeg the bot still runs, but videos
+over Telegram's upload limit are sent as links and YouTube is limited to its rare single-file streams.
 
 ```bash
 cp .env.dist .env   # then fill in BOT_TOKEN and USER_ID
@@ -77,6 +79,7 @@ main.py                            entry point: loads env, wires adapters, start
     ├── telegram_bot.py            generic TelegramBot base: dispatch, auth whitelist, error reporting
     └── social_media_bot.py        bot logic: commands, stats, sending media back to Telegram
 └── media/media.py                 SocialMedia interface + Medias result container
+└── media/ffmpeg.py                ffmpeg helpers: join streams, re-encode to fit, probe duration
 └── twitter/twitter.py             Twitter/X adapter
 └── instagram/instagram.py         Instagram adapter
 └── yt/youtube.py                  YouTube adapter
@@ -86,9 +89,12 @@ main.py                            entry point: loads env, wires adapters, start
 Each adapter implements `SocialMedia` (`is_valid_url` + `get_media`). The bot tries every adapter
 whose `is_valid_url` matches the incoming link and replies with whatever media is found. Photos (and
 the videos of an Instagram carousel, keeping the carousel's order) are sent as albums of up to 10. The post text, when there is one, becomes the caption of the first message
-sent for that link (truncated to Telegram's 1024-character limit). Videos are
-sent by direct URL when small enough, uploaded from a temporary file when larger, or returned as a
-direct link when they exceed Telegram's upload limit. Audio is uploaded as a Telegram music track.
+sent for that link (truncated to Telegram's 1024-character limit). Videos go
+out in the best version that fits Telegram's limits: by direct URL up to 20 MB, uploaded from a
+temporary file up to 50 MB (Twitter offers several versions of each video). When no version fits, the bot
+re-encodes the video with ffmpeg (H.264/AAC, at most 720p) if 50 MB still leaves at least 500 kbps for the picture
+— roughly videos up to 10 minutes — and otherwise replies with a direct link. YouTube serves video and audio as
+separate streams; the bot joins them with ffmpeg. Audio is uploaded as a Telegram music track.
 
 Per-user stats are persisted to `.data/persistence` via `python-telegram-bot`'s `PicklePersistence`.
 
@@ -104,6 +110,8 @@ uv run pytest                # tests (tests/, pure logic: url matching, Medias, 
 uv run pytest --cov          # tests + coverage
 ```
 
+The ffmpeg tests run real ffmpeg on tiny generated clips and are skipped when it isn't installed; CI installs it.
+
 CI (`.github/workflows/ci.yml`) runs `ruff check`, `ruff format --check`, and `pytest --cov` on
 push to `main` and on PRs, and publishes the Tests/Coverage badges above by updating a gist. A
 [gitleaks secret scan](.github/workflows/secret-scan.yml) also runs on every push/PR, and a tagged
@@ -112,6 +120,9 @@ push builds and publishes the Docker image.
 ## Limitations
 
 - The YouTube Music adapter downloads single tracks only — playlist and album links are not supported.
+- Videos that don't fit 50 MB and are longer than about 10 minutes are sent as a direct link: a re-encode
+  would look too poor. Re-encodes run one at a time and take a while (about 25 s for a 4.5-minute 1080p video
+  on 12 cores).
 - Tweets mixing photos and videos are sent as photos first, then videos. A carousel video too large
   for Telegram to fetch by URL (over 20 MB) makes its album fall back to the same photos-then-videos order.
 - Twitter/Instagram downloads depend on third-party APIs that may rate-limit or change.
