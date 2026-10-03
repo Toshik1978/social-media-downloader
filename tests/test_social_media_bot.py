@@ -1,3 +1,5 @@
+import io
+import threading
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -81,6 +83,21 @@ async def test_download_adapter_exception_is_logged(bot):
     await bot.download_message_handler(update, context)
     # Falls through to "No media found" after swallowing+logging the error
     update.effective_message.reply_text.assert_awaited_with("No media found", do_quote=True)
+
+
+async def test_adapters_run_in_a_worker_thread(bot):
+    threads = []
+
+    class ThreadRecordingAdapter(FakeAdapter):
+        def get_media(self, url: str) -> Medias:
+            threads.append(threading.get_ident())
+            return super().get_media(url)
+
+    bot._SocialMediaBot__sm = [ThreadRecordingAdapter()]
+    update, context = make_update(text="x"), make_context()
+    await bot.download_message_handler(update, context)
+    # Downloads and re-encodes must not block the event loop
+    assert threads and threads[0] != threading.get_ident()
 
 
 async def test_download_photos(bot):
@@ -307,16 +324,6 @@ async def test_reply_video_medium_uploads_file(bot, monkeypatch):
     update.effective_message.reply_text.return_value.delete.assert_awaited_once()
 
 
-async def test_reply_video_too_large_sends_link(bot, monkeypatch):
-    size = constants.FileSizeLimit.FILESIZE_UPLOAD + 10
-    monkeypatch.setattr(requests, "get", lambda *a, **k: fake_response(size))
-    update, context = make_update(), make_context()
-    context.bot_data["stats"] = {1: {"messages_handled": 0, "media_downloaded": 0}}
-    await bot._reply_videos(update, context, [Video("http://v/huge.mp4")])
-    args = update.effective_message.reply_text.await_args.args[0]
-    assert "http://v/huge.mp4" in args
-
-
 async def test_reply_video_error_sends_direct_link(bot, monkeypatch):
     def boom(*a, **k):
         raise requests.exceptions.ConnectionError("down")
@@ -338,12 +345,168 @@ async def test_reply_video_file_error_sends_direct_link(bot):
     update.effective_message.reply_text.assert_awaited()
 
 
+# --- variants and compression ----------------------------------------------
+
+UPLOAD = constants.FileSizeLimit.FILESIZE_UPLOAD
+DOWNLOAD = constants.FileSizeLimit.FILESIZE_DOWNLOAD
+
+
+def patch_sizes(monkeypatch, sizes: dict[str, int]) -> dict[str, MagicMock]:
+    """Serve a fake response with the given Content-Length per URL; returns the responses by URL, in request order."""
+    requested = {}
+
+    def fake_get(url, *a, **k):
+        requested[url] = fake_response(sizes[url])
+        return requested[url]
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    return requested
+
+
+def patch_ffmpeg(monkeypatch, *, available=True, duration=None, transcoded=None) -> list[tuple]:
+    """Stub media.ffmpeg; returns the list of transcode calls."""
+    calls = []
+    monkeypatch.setattr("media.ffmpeg.available", lambda: available)
+    monkeypatch.setattr("media.ffmpeg.duration", lambda url: duration)
+
+    def fake_transcode(inputs, duration, limit):
+        calls.append((inputs, duration, limit))
+        return transcoded
+
+    monkeypatch.setattr("media.ffmpeg.transcode", fake_transcode)
+    return calls
+
+
+def texts(update) -> list[str]:
+    return [c.args[0] for c in update.effective_message.reply_text.await_args_list]
+
+
+def stats_context() -> MagicMock:
+    context = make_context()
+    context.bot_data["stats"] = {1: {"messages_handled": 0, "media_downloaded": 0}}
+    return context
+
+
+async def test_reply_video_uploads_first_variant_that_fits(bot, monkeypatch):
+    sizes = {"http://v/1080.mp4": UPLOAD + 10, "http://v/720.mp4": DOWNLOAD + 10, "http://v/360.mp4": 1024}
+    requested = patch_sizes(monkeypatch, sizes)
+    calls = patch_ffmpeg(monkeypatch)
+    update, context = make_update(), stats_context()
+    video = Video("http://v/1080.mp4", 262, 1920, 1080, fallbacks=["http://v/720.mp4", "http://v/360.mp4"])
+    await bot._reply_videos(update, context, [video])
+
+    # 1080p is too big for an upload, 720p fits: 360p is never requested
+    assert list(requested) == ["http://v/1080.mp4", "http://v/720.mp4"]
+    requested["http://v/1080.mp4"].close.assert_called_once()
+    sent = update.effective_message.reply_video.await_args.kwargs
+    assert not isinstance(sent["video"], str)  # uploaded from a temp file
+    assert (sent["duration"], sent["width"], sent["height"]) == (262, 1920, 1080)
+    assert calls == []
+    assert context.bot_data["stats"][1]["media_downloaded"] == 1
+
+
+async def test_reply_video_small_variant_sent_by_url(bot, monkeypatch):
+    patch_sizes(monkeypatch, {"http://v/1080.mp4": UPLOAD + 10, "http://v/360.mp4": 1024})
+    update, context = make_update(), stats_context()
+    await bot._reply_videos(update, context, [Video("http://v/1080.mp4", fallbacks=["http://v/360.mp4"])])
+    update.effective_message.reply_video.assert_awaited_once_with(
+        video="http://v/360.mp4", duration=None, width=None, height=None, caption=None, do_quote=True
+    )
+
+
+async def test_reply_video_compresses_smallest_variant_when_none_fits(bot, monkeypatch):
+    patch_sizes(monkeypatch, {"http://v/1080.mp4": UPLOAD * 3, "http://v/720.mp4": UPLOAD + 10})
+    out = io.BytesIO(b"compressed")
+    calls = patch_ffmpeg(monkeypatch, transcoded=out)
+    update, context = make_update(), stats_context()
+    video = Video("http://v/1080.mp4", 262, 1920, 1080, fallbacks=["http://v/720.mp4"])
+    await bot._reply_videos(update, context, [video], "Text")
+
+    assert calls == [(["http://v/720.mp4"], 262, UPLOAD)]
+    update.effective_message.reply_video.assert_awaited_once_with(
+        video=out, duration=262, width=1920, height=1080, caption="Text", do_quote=True, supports_streaming=True
+    )
+    assert out.closed
+    assert texts(update) == ["Video is too large, compressing it (this might take a while)"]
+    update.effective_message.reply_text.return_value.delete.assert_awaited_once()
+    assert context.bot_data["stats"][1]["media_downloaded"] == 1
+
+
+async def test_reply_video_probes_unknown_duration(bot, monkeypatch):
+    patch_sizes(monkeypatch, {"http://v/big.mp4": UPLOAD + 10})
+    calls = patch_ffmpeg(monkeypatch, transcoded=io.BytesIO(b"x"))
+    probed = []
+    monkeypatch.setattr("media.ffmpeg.duration", lambda url: probed.append(url) or 100)
+    update, context = make_update(), stats_context()
+    await bot._reply_videos(update, context, [Video("http://v/big.mp4")])
+    assert probed == ["http://v/big.mp4"]
+    assert calls == [(["http://v/big.mp4"], 100, UPLOAD)]
+
+
+@pytest.mark.parametrize(
+    "video, ffmpeg_state",
+    [
+        (Video("http://v/huge.mp4", 3600), {}),  # too long for a decent re-encode
+        (Video("http://v/huge.mp4"), {"duration": None}),  # duration unknown
+        (Video("http://v/huge.mp4", 60), {"available": False}),  # no ffmpeg
+    ],
+)
+async def test_reply_video_cant_compress_sends_link(bot, monkeypatch, video, ffmpeg_state):
+    patch_sizes(monkeypatch, {"http://v/huge.mp4": UPLOAD + 10})
+    calls = patch_ffmpeg(monkeypatch, **ffmpeg_state)
+    update, context = make_update(), stats_context()
+    await bot._reply_videos(update, context, [video])
+    assert calls == []
+    assert texts(update) == ["Video is too large for Telegram upload. Direct video link:\nhttp://v/huge.mp4"]
+
+
+async def test_reply_video_compression_failure_links_best_variant(bot, monkeypatch):
+    patch_sizes(monkeypatch, {"http://v/1080.mp4": UPLOAD * 3, "http://v/720.mp4": UPLOAD + 10})
+    patch_ffmpeg(monkeypatch, transcoded=None)
+    update, context = make_update(), stats_context()
+    await bot._reply_videos(update, context, [Video("http://v/1080.mp4", 262, fallbacks=["http://v/720.mp4"])])
+    update.effective_message.reply_text.return_value.delete.assert_awaited_once()
+    assert texts(update)[-1] == "Video is too large for Telegram upload. Direct video link:\nhttp://v/1080.mp4"
+    update.effective_message.reply_video.assert_not_awaited()
+
+
+async def test_reply_video_fallback_error_links_best_variant(bot, monkeypatch):
+    def fake_get(url, *a, **k):
+        response = fake_response(UPLOAD + 10)
+        if url == "http://v/720.mp4":
+            response.raise_for_status.side_effect = requests.HTTPError("403")
+        return response
+
+    monkeypatch.setattr(requests, "get", fake_get)
+    patch_ffmpeg(monkeypatch)
+    update, context = make_update(), stats_context()
+    await bot._reply_videos(update, context, [Video("http://v/1080.mp4", 262, fallbacks=["http://v/720.mp4"])])
+    assert texts(update) == ["Error occurred when trying to send video. Direct link:\nhttp://v/1080.mp4"]
+
+
+async def test_reply_video_compressed_upload_rejected_sends_link(bot, monkeypatch):
+    patch_sizes(monkeypatch, {"http://v/big.mp4": UPLOAD + 10})
+    out = io.BytesIO(b"x")
+    patch_ffmpeg(monkeypatch, transcoded=out)
+    update, context = make_update(), stats_context()
+    update.effective_message.reply_video.side_effect = telegram.error.BadRequest("too big")
+    await bot._reply_videos(update, context, [Video("http://v/big.mp4", 262)])
+    assert out.closed
+    update.effective_message.reply_text.return_value.delete.assert_awaited_once()
+    assert texts(update)[-1] == "Error occurred when trying to send video. Direct link:\nhttp://v/big.mp4"
+
+
 # --- base-class TelegramBot paths ------------------------------------------
 
 
 def test_handlers_registered(bot):
     # start/help/stats/resetstats commands + download message + deny-access
     assert len(bot.application.handlers[0]) == 6
+
+
+def test_updates_are_handled_concurrently(bot):
+    # One user's long download must not hold up everyone else's messages
+    assert bot.application.concurrent_updates > 1
 
 
 async def test_post_init_sets_commands(bot, monkeypatch):

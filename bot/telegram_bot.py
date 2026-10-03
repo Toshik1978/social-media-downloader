@@ -42,11 +42,13 @@ class TelegramBot:
         # Create an application. Uploads can be close to the 50 MB limit, and PTB's default 20 s media write
         # timeout fails them on slower links. Widening the except clauses instead isn't safe: TimedOut can fire
         # even when Telegram got the file, which would add a duplicate fallback message.
+        # Updates are handled concurrently: a download or re-encode can take minutes.
         self.application = (
             Application.builder()
             .token(token)
             .persistence(persistence)
             .media_write_timeout(MEDIA_WRITE_TIMEOUT)
+            .concurrent_updates(True)
             .post_init(self._post_init)
             .build()
         )
