@@ -1,3 +1,4 @@
+import asyncio
 from collections.abc import Sequence
 from itertools import batched
 from logging import Logger
@@ -10,6 +11,7 @@ from telegram import InputMediaPhoto, InputMediaVideo, Update, constants
 from telegram.ext import CallbackContext
 
 from bot.telegram_bot import TelegramBot, command_description
+from media import ffmpeg
 from media.media import Audio, Gif, Medias, Photo, SocialMedia, Video
 
 DOWNLOAD_CHUNK_SIZE = 256 * 1024
@@ -89,7 +91,7 @@ class SocialMediaBot(TelegramBot):
         for social in self.__sm:
             if social.is_valid_url(url):
                 try:
-                    media = social.get_media(url)
+                    media = await asyncio.to_thread(social.get_media, url)
                 except Exception as e:
                     self._log(
                         update,
@@ -201,70 +203,115 @@ class SocialMediaBot(TelegramBot):
     ) -> None:
         for video in videos:
             if isinstance(video.source, str):
-                await self.__reply_video_url(update, video, video.source, caption)
+                await self.__reply_video_url(update, video, caption)
             else:
                 await self.__reply_video_file(update, video, video.source, caption)
             caption = None
 
             context.bot_data["stats"][update.effective_user.id]["media_downloaded"] += 1
 
-    async def __reply_video_url(self, update: Update, video: Video, url: str, caption: str | None) -> None:
+    async def __reply_video_url(self, update: Update, video: Video, caption: str | None) -> None:
+        # Send the best version that fits; when none does, try re-encoding the smallest one.
+        urls = [video.source, *video.fallbacks]
         try:
-            request = requests.get(url, stream=True, timeout=30)
-            request.raise_for_status()
-            if (video_size := int(request.headers["Content-Length"])) <= constants.FileSizeLimit.FILESIZE_DOWNLOAD:
-                # Try sending by url
-                await update.effective_message.reply_video(
-                    video=url,
-                    duration=video.duration,
-                    width=video.width,
-                    height=video.height,
-                    caption=caption,
-                    do_quote=True,
-                )
-                self._log(update, "info", "Sent video (download)")
-
-            elif video_size <= constants.FileSizeLimit.FILESIZE_UPLOAD:
-                self._log(
-                    update,
-                    "info",
-                    f"Video size ({video_size}) is bigger than MAX_FILESIZE_UPLOAD, using upload method",
-                )
-                message = await update.effective_message.reply_text(
-                    "Video is too large for direct download\nUsing upload method (this might take a bit longer)",
-                    do_quote=True,
-                )
-                with TemporaryFile() as tf:
-                    self._log(
-                        update, "info", f"Downloading video (Content-length: {request.headers['Content-length']})"
-                    )
-                    for chunk in request.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
-                        tf.write(chunk)
-                    self._log(update, "info", "Video downloaded, uploading to Telegram")
-                    tf.seek(0)
+            for url in urls:
+                request = requests.get(url, stream=True, timeout=30)
+                request.raise_for_status()
+                video_size = int(request.headers["Content-Length"])
+                if video_size <= constants.FileSizeLimit.FILESIZE_DOWNLOAD:
+                    request.close()
+                    # Try sending by url
                     await update.effective_message.reply_video(
-                        video=tf,
+                        video=url,
                         duration=video.duration,
                         width=video.width,
                         height=video.height,
                         caption=caption,
                         do_quote=True,
-                        supports_streaming=True,
                     )
-                    self._log(update, "info", "Sent video (upload)")
-                await message.delete()
+                    self._log(update, "info", "Sent video (download)")
+                    return
 
-            else:
+                if video_size <= constants.FileSizeLimit.FILESIZE_UPLOAD:
+                    self._log(
+                        update,
+                        "info",
+                        f"Video size ({video_size}) is bigger than MAX_FILESIZE_UPLOAD, using upload method",
+                    )
+                    message = await update.effective_message.reply_text(
+                        "Video is too large for direct download\nUsing upload method (this might take a bit longer)",
+                        do_quote=True,
+                    )
+                    with TemporaryFile() as tf:
+                        self._log(update, "info", f"Downloading video (Content-length: {video_size})")
+                        for chunk in request.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                            tf.write(chunk)
+                        self._log(update, "info", "Video downloaded, uploading to Telegram")
+                        tf.seek(0)
+                        await update.effective_message.reply_video(
+                            video=tf,
+                            duration=video.duration,
+                            width=video.width,
+                            height=video.height,
+                            caption=caption,
+                            do_quote=True,
+                            supports_streaming=True,
+                        )
+                        self._log(update, "info", "Sent video (upload)")
+                    await message.delete()
+                    return
+
+                self._log(update, "info", f"Video size ({video_size}) is bigger than FILESIZE_UPLOAD: {url}")
+                request.close()
+
+            if not await self.__reply_video_transcoded(update, video, urls[-1], caption):
                 self._log(update, "info", "Video is too large, sending direct link")
                 await update.effective_message.reply_text(
-                    f"Video is too large for Telegram upload. Direct video link:\n{url}", do_quote=True
+                    f"Video is too large for Telegram upload. Direct video link:\n{video.source}", do_quote=True
                 )
         except (requests.HTTPError, KeyError, telegram.error.BadRequest, requests.exceptions.ConnectionError) as e:
             self._log(update, "info", f"{e.__class__.__qualname__}: {e}")
             self._log(update, "info", "Error occurred when trying to send video, sending direct link")
             await update.effective_message.reply_text(
-                f"Error occurred when trying to send video. Direct link:\n{url}", do_quote=True
+                f"Error occurred when trying to send video. Direct link:\n{video.source}", do_quote=True
             )
+
+    async def __reply_video_transcoded(self, update: Update, video: Video, url: str, caption: str | None) -> bool:
+        """Re-encode the video to fit the upload limit and send it. False if that isn't possible."""
+
+        limit = constants.FileSizeLimit.FILESIZE_UPLOAD
+        if not ffmpeg.available():
+            self._log(update, "info", "ffmpeg is not installed, can't compress the video")
+            return False
+        duration = video.duration or await asyncio.to_thread(ffmpeg.duration, url)
+        if not duration or ffmpeg.video_bitrate(duration, limit) is None:
+            self._log(update, "info", f"Video is too long to compress (duration: {duration})")
+            return False
+
+        self._log(update, "info", f"Compressing video ({duration} s): {url}")
+        message = await update.effective_message.reply_text(
+            "Video is too large, compressing it (this might take a while)", do_quote=True
+        )
+        try:
+            f = await asyncio.to_thread(ffmpeg.transcode, [url], duration, limit)
+            if f is None:
+                self._log(update, "info", "Video compression failed")
+                return False
+            with f:
+                # Re-encoding keeps the aspect ratio, which is what Telegram uses width/height for.
+                await update.effective_message.reply_video(
+                    video=f,
+                    duration=duration,
+                    width=video.width,
+                    height=video.height,
+                    caption=caption,
+                    do_quote=True,
+                    supports_streaming=True,
+                )
+            self._log(update, "info", "Sent video (compressed)")
+            return True
+        finally:
+            await message.delete()
 
     async def __reply_video_file(self, update: Update, video: Video, f: IO[bytes], caption: str | None) -> None:
         try:
