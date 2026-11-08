@@ -1,6 +1,7 @@
 from abc import abstractmethod
 from dataclasses import dataclass, field
 from typing import IO
+from urllib.parse import urlparse
 
 
 @dataclass
@@ -83,6 +84,19 @@ class Medias:
 
     caption: str | None = None
     """Post text (tweet text, Instagram caption, video title)."""
+
+
+def is_http_url_on(url: str, *domains: str) -> bool:
+    """Check that the URL is http(s) and its host is one of the domains or a subdomain of one.
+
+    Matches whole host labels, so "evilx.com" or "x.com.evil.com" don't pass as "x.com".
+    """
+
+    parsed_url = urlparse(url)
+    host = parsed_url.hostname or ""
+    return parsed_url.scheme in ["http", "https"] and any(
+        host == domain or host.endswith("." + domain) for domain in domains
+    )
 
 
 class ServiceUnavailable(Exception):

@@ -2,13 +2,12 @@ import os
 from logging import Logger
 from tempfile import TemporaryDirectory, TemporaryFile
 from typing import IO
-from urllib.parse import urlparse
 
 from pytubefix import Stream
 from pytubefix import YouTube as YTube
 
 from media import ffmpeg
-from media.media import Medias, SocialMedia, Video
+from media.media import Medias, SocialMedia, Video, is_http_url_on
 from yt.retry import with_client_retry
 
 
@@ -24,13 +23,8 @@ class YouTube(SocialMedia):
 
     def is_valid_url(self, url: str) -> bool:
         """Check if URL points to valid social media data."""
-        parsed_url = urlparse(url)
         # YouTube Music links are handled by the YouTubeMusic adapter (audio only).
-        return (
-            parsed_url.scheme in ["http", "https"]
-            and parsed_url.netloc != "music.youtube.com"
-            and (parsed_url.netloc.endswith("youtube.com") or parsed_url.netloc.endswith("youtu.be"))
-        )
+        return not is_http_url_on(url, "music.youtube.com") and is_http_url_on(url, "youtube.com", "youtu.be")
 
     def get_media(self, url: str) -> Medias:
         """Get all available medias."""

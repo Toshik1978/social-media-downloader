@@ -52,6 +52,10 @@ def test_twitter_accepts_known_hosts(twitter, url):
         "ftp://twitter.com/user/status/123",
         "not a url",
         "https://twitterclone.evil.com/status/1",
+        "https://eviltwitter.com/user/status/123",
+        "https://evilx.com/user/status/123",
+        "https://evilt.co/abc123",
+        "https://x.com.evil.com/user/status/123",
     ],
 )
 def test_twitter_rejects_others(twitter, url):
@@ -76,6 +80,8 @@ def test_instagram_accepts_known_hosts(instagram, url):
         "https://twitter.com/user/status/123",
         "https://youtu.be/abc",
         "ftp://instagram.com/p/abc/",
+        "https://evilinstagram.com/p/abc/",
+        "https://instagram.com.evil.com/p/abc/",
     ],
 )
 def test_instagram_rejects_others(instagram, url):
@@ -103,6 +109,8 @@ def test_youtube_accepts_known_hosts(youtube, url):
         "ftp://youtube.com/watch?v=abc",
         "https://youtube.evil.com/watch?v=abc",
         "https://music.youtube.com/watch?v=abc",
+        "https://notyoutube.com/watch?v=abc",
+        "https://evilyoutu.be/abc",
     ],
 )
 def test_youtube_rejects_others(youtube, url):

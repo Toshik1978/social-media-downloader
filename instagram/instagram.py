@@ -1,10 +1,9 @@
 from logging import Logger
 from time import sleep
-from urllib.parse import urlparse
 
 import requests
 
-from media.media import Medias, Photo, ServiceUnavailable, SocialMedia, Video
+from media.media import Medias, Photo, ServiceUnavailable, SocialMedia, Video, is_http_url_on
 
 RETRY_DELAYS = (1, 3)
 """Seconds to wait before each retry of an API request that failed with a server error or a dropped connection."""
@@ -23,8 +22,7 @@ class Instagram(SocialMedia):
     def is_valid_url(self, url: str) -> bool:
         """Check if URL points to valid social media data."""
 
-        parsed_url = urlparse(url)
-        return parsed_url.scheme in ["http", "https"] and parsed_url.netloc.endswith("instagram.com")
+        return is_http_url_on(url, "instagram.com")
 
     def get_media(self, url: str) -> Medias:
         """Get all available medias."""

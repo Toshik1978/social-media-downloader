@@ -1,11 +1,11 @@
 import html
 import re
 from logging import Logger
-from urllib.parse import urlparse, urlsplit
+from urllib.parse import urlsplit
 
 import requests
 
-from media.media import Gif, Medias, Photo, SocialMedia, Video
+from media.media import Gif, Medias, Photo, SocialMedia, Video, is_http_url_on
 
 
 class Twitter(SocialMedia):
@@ -19,12 +19,7 @@ class Twitter(SocialMedia):
     def is_valid_url(self, url: str) -> bool:
         """Check if URL points to valid social media data."""
 
-        parsed_url = urlparse(url)
-        return parsed_url.scheme in ["http", "https"] and (
-            parsed_url.netloc.endswith("t.co")
-            or parsed_url.netloc.endswith("twitter.com")
-            or parsed_url.netloc.endswith("x.com")
-        )
+        return is_http_url_on(url, "t.co", "twitter.com", "x.com")
 
     def get_media(self, url: str) -> Medias:
         """Get all available medias."""
