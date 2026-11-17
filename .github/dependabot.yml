@@ -1,41 +1,31 @@
 version: 2
 updates:
-  # Python dependencies (uv: pyproject.toml + uv.lock)
-  - package-ecosystem: uv
+  - package-ecosystem: docker
     directory: "/"
     schedule:
       interval: monthly
-    open-pull-requests-limit: 10
     commit-message:
       prefix: build
       include: scope
+    open-pull-requests-limit: 10
     groups:
-      uv:
+      docker:
         patterns:
           - "*"
         update-types:
           - minor
           - patch
-      # Security updates are a repository setting, not something this file can
-      # switch on; it only shapes their PRs. One advisory often lands on several
-      # packages of one stack at once, and separate PRs each conflict on the
-      # lockfile or fail CI on the others' advisories, so they are grouped into
-      # a single PR that can actually go green.
-      uv-security:
-        applies-to: security-updates
-        patterns:
-          - "*"
-
+    cooldown:
+      default-days: 7
   # GitHub Actions used by the CI workflows
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
       interval: monthly
-    open-pull-requests-limit: 10
     commit-message:
       prefix: ci
       include: scope
-
+    open-pull-requests-limit: 10
     # EVERY action in this repository is pinned to a moving major tag (`@v4`,
     # `@v7`), never to an exact `x.y.z`. Upstream repoints those tags on each
     # release, so minor and patch updates arrive without a commit here and a PR
@@ -58,7 +48,6 @@ updates:
         update-types:
           - version-update:semver-minor
           - version-update:semver-patch
-
     # Only majors survive the ignore above, so that is all the group covers.
     groups:
       github-actions:
@@ -66,3 +55,32 @@ updates:
           - "*"
         update-types:
           - major
+    cooldown:
+      default-days: 7
+  # Python dependencies (uv: pyproject.toml + uv.lock)
+  - package-ecosystem: uv
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: build
+      include: scope
+    open-pull-requests-limit: 10
+    groups:
+      uv:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+      # Security updates are a repository setting, not something this file can
+      # switch on; it only shapes their PRs. One advisory often lands on several
+      # packages of one stack at once, and separate PRs each conflict on the
+      # lockfile or fail CI on the others' advisories, so they are grouped into
+      # a single PR that can actually go green.
+      uv-security:
+        patterns:
+          - "*"
+        applies-to: security-updates
+    cooldown:
+      default-days: 7
