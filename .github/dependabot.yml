@@ -8,6 +8,13 @@ updates:
       prefix: build
       include: scope
     open-pull-requests-limit: 10
+    ignore:
+      # The tag carries the Python version, which moves by hand together with
+      # .python-version and requires-python; patches still arrive.
+      - dependency-name: "ghcr.io/astral-sh/uv"
+        update-types:
+          - "version-update:semver-major"
+          - "version-update:semver-minor"
     groups:
       docker:
         patterns:
