@@ -1,0 +1,85 @@
+# Install with `pre-commit install`. That alone only wires the pre-commit
+# stage, which would leave the commit-msg and pre-push hooks dormant —
+# declaring the hook types here is what makes one command enough.
+default_install_hook_types: [pre-commit, pre-push, commit-msg]
+
+repos:
+  - repo: https://github.com/compilerla/conventional-pre-commit
+    rev: v4.5.0
+    hooks:
+      - id: conventional-pre-commit
+        stages:
+          - commit-msg
+
+  - repo: local
+    hooks:
+      # Each gate at the cheapest stage that still catches it. Ruff is
+      # sub-second, so it runs per commit; the same checks CI runs.
+      - id: ruff-check
+        name: ruff check
+        entry: uv run ruff check
+        language: system
+        types: [python]
+        stages:
+          - pre-commit
+
+      - id: ruff-format
+        name: ruff format --check
+        entry: uv run ruff format --check
+        language: system
+        types: [python]
+        stages:
+          - pre-commit
+
+      # Secrets in the staged diff, before they reach history: a pushed secret
+      # has to be rotated, not just removed. False positives go in .gitleaks.toml.
+      - id: gitleaks
+        name: gitleaks (staged)
+        entry: gitleaks git --pre-commit --staged --redact --verbose
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages:
+          - pre-commit
+
+      # Pre-push, not earlier: the suite takes seconds, and pushing is the
+      # first point at which anyone else sees the commits. Not filtered by
+      # file type: a pyproject.toml or uv.lock change can break it too.
+      - id: pytest
+        name: pytest
+        entry: uv run pytest -q
+        language: system
+        pass_filenames: false
+        stages:
+          - pre-push
+
+  # Stock file guards: oversized files, leftover conflict markers, YAML that
+  # does not parse. Not the whitespace fixers: they rewrite patches, fixtures
+  # and generated files (piloted on linux-config, 2026-11-18).
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-added-large-files
+        stages: [pre-commit]
+      - id: check-merge-conflict
+        stages: [pre-commit]
+      - id: check-yaml
+        stages: [pre-commit]
+
+  - repo: local
+    hooks:
+      - id: actionlint
+        name: actionlint
+        entry: actionlint
+        language: system
+        files: ^\.github/workflows/.*\.ya?ml$
+        stages: [pre-commit]
+
+      # hadolint comes from mise (dotfiles scripts/mise.sh; linux-config
+      # bootstrap/mise/config.toml on the server).
+      - id: hadolint
+        name: hadolint
+        entry: hadolint
+        language: system
+        types: [dockerfile]
+        stages: [pre-commit]
