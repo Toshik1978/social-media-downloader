@@ -53,7 +53,7 @@ updates:
     ignore:
       - dependency-name: "*"
         update-types:
-          - version-update:semver-minor
+          - "version-update:semver-minor"
           - version-update:semver-patch
     # Only majors survive the ignore above, so that is all the group covers.
     groups:
@@ -62,6 +62,20 @@ updates:
           - "*"
         update-types:
           - major
+    cooldown:
+      default-days: 7
+  - package-ecosystem: pre-commit
+    directory: "/"
+    schedule:
+      interval: monthly
+    commit-message:
+      prefix: build
+      include: scope
+    open-pull-requests-limit: 10
+    groups:
+      pre-commit:
+        patterns:
+          - "*"
     cooldown:
       default-days: 7
   # Python dependencies (uv: pyproject.toml + uv.lock)
